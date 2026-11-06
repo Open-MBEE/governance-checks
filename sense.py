@@ -109,7 +109,8 @@ class Repository:
             return facts(requiredStatusChecks=len(ctx), detail="required: " + (", ".join(ctx) or "none"))
         status, prot = self.protection()
         if status == 200:
-            ctx = (prot.get("required_status_checks") or {}).get("contexts") or []
+            rsc = prot.get("required_status_checks") or {}
+            ctx = sorted({*(rsc.get("contexts") or []), *(c["context"] for c in rsc.get("checks") or [])})
             return facts(requiredStatusChecks=len(ctx), detail="classic protection: " + (", ".join(ctx) or "none"))
         s, _ = self.rules()
         if s == 200:
@@ -257,12 +258,12 @@ class Repository:
     def _code_scanning_overdue(self, fact, levels, days):
         status, alerts = self.gh.api(f"repos/{self.full}/code-scanning/alerts?state=open&per_page=100", paginate=True)
         if status == 404:
-            return facts(codeScanningConfigured=False, **{fact: 0}, detail="code scanning not enabled")
+            return facts(codeScanningEnabled=False, **{fact: 0}, detail="code scanning not enabled")
         if status != 200:
             return unreadable(f"HTTP {status}")
         cutoff = now() - dt.timedelta(days=days)
         old = [a for a in alerts if (a.get("rule") or {}).get("security_severity_level") in levels and parse_time(a["created_at"]) < cutoff]
-        return facts(**{fact: len(old)}, detail=f"{len(old)} {'/'.join(levels)} alert(s) older than {days} days")
+        return facts(codeScanningEnabled=True, **{fact: len(old)}, detail=f"{len(old)} {'/'.join(levels)} alert(s) older than {days} days")
 
     def sense_no_open_critical(self):
         return self._code_scanning_overdue("criticalAlertsOverdue", ("critical",), 14)
@@ -288,8 +289,8 @@ class Repository:
         path, text, denied = self.codeowners_text()
         if denied:
             return unreadable(f"contents HTTP {denied}")
-        if not text:
-            return facts(codeownersPresent=False, unverifiedCodeOwners=0, detail="no CODEOWNERS")
+        if path is None:
+            return facts(codeownersPresent=False, codeOwners=0, unverifiedCodeOwners=0, detail="no CODEOWNERS")
         lines = [l for l in text.splitlines() if l.strip() and not l.lstrip().startswith("#")]
         handles = {h for line in lines for h in re.findall(r"@([A-Za-z0-9-]+)(?![/\w])", line)}
         problems, blocked = [], []
@@ -311,8 +312,8 @@ class Repository:
                 problems.append(f"{h}: no verification within 12 months")
         if blocked and not problems:
             return unreadable("; ".join(blocked))
-        return facts(codeownersPresent=True, unverifiedCodeOwners=len(problems),
-                     detail="; ".join(problems + blocked) or f"{len(handles)} owner(s) verified")
+        return facts(codeownersPresent=True, codeOwners=len(handles), unverifiedCodeOwners=len(problems),
+                     detail="; ".join(problems + blocked) or (f"{len(handles)} owner(s) verified" if handles else f"{path} names no owner"))
 
     # --- workflow-least-privilege
     def sense_default_token_read(self):

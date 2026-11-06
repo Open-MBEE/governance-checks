@@ -77,6 +77,9 @@ def test_checks_and_history_rules():
                    {"type": "non_fast_forward"}])
     r = repo({"repos/o/r/rules/branches/develop": rules})
     assert r.sense_checks_required().facts == {"requiredStatusChecks": 2}
+    classic = {"repos/o/r/rules/branches/develop": (200, []), "repos/o/r/branches/develop/protection":
+               (200, {"required_status_checks": {"contexts": [], "checks": [{"context": "ci/build", "app_id": 1}]}})}
+    assert repo(classic).sense_checks_required().facts == {"requiredStatusChecks": 1}
     assert r.sense_no_force_push().facts == {"forcePushBlocked": True}
     assert r.sense_no_deletion().facts == {"deletionBlocked": False}
 
@@ -88,8 +91,12 @@ def test_codeowners():
     assert r.sense_codeowners_present().facts == {"codeownersPresent": True}
     assert r.sense_codeowners_valid().facts == {"codeownersErrors": 0}
     s = r.sense_verified_owners()
-    assert s.facts == {"codeownersPresent": True, "unverifiedCodeOwners": 2} and "someone: not in maintainers.yaml" in s.detail
+    assert s.facts == {"codeownersPresent": True, "codeOwners": 2, "unverifiedCodeOwners": 2} and "someone: not in maintainers.yaml" in s.detail
     assert repo({}).sense_codeowners_present().facts == {"codeownersPresent": False}
+    assert repo({}).sense_verified_owners().facts == {"codeownersPresent": False, "codeOwners": 0, "unverifiedCodeOwners": 0}
+    empty = {"repos/o/r/contents/CODEOWNERS": (200, {"content": ""})}
+    assert repo(empty).sense_codeowners_present().facts == {"codeownersPresent": True}
+    assert repo(empty).sense_verified_owners().facts == {"codeownersPresent": True, "codeOwners": 0, "unverifiedCodeOwners": 0}
     denied = {f"repos/o/r/contents/{p}": (403, {}) for p in common.CODEOWNERS_PATHS}
     assert repo(denied).sense_codeowners_present().unreadable and repo(denied).sense_verified_owners().unreadable
     team = {"repos/o/r/contents/.github/CODEOWNERS": (200, {"content": base64.b64encode(b"* @o/core\n").decode()})}
@@ -137,11 +144,14 @@ def test_code_scanning_and_alert_ages():
                     {"rule": {"security_severity_level": "medium"}, "created_at": iso(61)}])
     r = repo({"repos/o/r/code-scanning/alerts": alerts, "repos/o/r/code-scanning/analyses": (200, [{"id": 1}])})
     assert r.sense_code_scanning_configured().facts == {"codeScanningConfigured": True}
-    assert r.sense_no_open_critical().facts == {"criticalAlertsOverdue": 1}
-    assert r.sense_scanning_clean().facts == {"mediumPlusAlertsOverdue": 1}
+    assert r.sense_no_open_critical().facts == {"codeScanningEnabled": True, "criticalAlertsOverdue": 1}
+    assert r.sense_scanning_clean().facts == {"codeScanningEnabled": True, "mediumPlusAlertsOverdue": 1}
+    clean = repo({"repos/o/r/code-scanning/alerts": (200, []), "repos/o/r/code-scanning/analyses": (200, [])})
+    assert clean.sense_code_scanning_configured().facts == {"codeScanningConfigured": False}
+    assert clean.sense_no_open_critical().facts == {"codeScanningEnabled": True, "criticalAlertsOverdue": 0}
     off = repo({"repos/o/r/code-scanning/alerts": (404, {}), "repos/o/r/code-scanning/analyses": (404, {})})
     assert off.sense_code_scanning_configured().facts == {"codeScanningConfigured": False}
-    assert off.sense_no_open_critical().facts == {"codeScanningConfigured": False, "criticalAlertsOverdue": 0}
+    assert off.sense_no_open_critical().facts == {"codeScanningEnabled": False, "criticalAlertsOverdue": 0}
     dep = (200, [{"security_advisory": {"severity": "critical"}, "dependency": {"package": {"name": "c"}}, "created_at": iso(14, 12)},
                  {"security_advisory": {"severity": "high"}, "dependency": {"package": {"name": "h"}}, "created_at": iso(30)}])
     assert repo({"repos/o/r/dependabot/alerts": dep}).sense_dependency_alerts_on_time().facts == {"dependabotAlertsOverdue": 1}

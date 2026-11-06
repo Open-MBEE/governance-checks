@@ -40,9 +40,11 @@ FACTS = [
     ("privateReportingOn", "Boolean", "GET /repos/{owner}/{repo}/private-vulnerability-reporting .enabled"),
     ("offPatternReleaseTags", "Integer", "releases of the last 12 months whose tag is not vMAJOR.MINOR.PATCH"),
     ("codeScanningConfigured", "Boolean", "code-scanning default setup configured, or analyses exist"),
+    ("codeScanningEnabled", "Boolean", "GET /repos/{owner}/{repo}/code-scanning/alerts answers (404 when code scanning is not enabled)"),
     ("criticalAlertsOverdue", "Integer", "open critical code-scanning alerts older than 14 days"),
     ("mediumPlusAlertsOverdue", "Integer", "open medium-or-higher code-scanning alerts older than 60 days"),
     ("dependabotAlertsOverdue", "Integer", "open Dependabot alerts past 14 (critical) or 60 (high, medium) days"),
+    ("codeOwners", "Integer", "distinct users CODEOWNERS names, teams expanded"),
     ("unverifiedCodeOwners", "Integer", "code owners not in maintainers.yaml or not verified within 12 months"),
     ("defaultTokenRead", "Boolean", "GET /repos/{owner}/{repo}/actions/permissions/workflow .default_workflow_permissions == read"),
 ]
@@ -66,10 +68,10 @@ PREDICATES = {
     "private-reporting-on": "repo.privateReportingOn",
     "semver-tags": "repo.offPatternReleaseTags == 0",
     "code-scanning-configured": "repo.codeScanningConfigured",
-    "no-open-critical": "repo.codeScanningConfigured and repo.criticalAlertsOverdue == 0",
-    "scanning-clean": "repo.codeScanningConfigured and repo.mediumPlusAlertsOverdue == 0",
+    "no-open-critical": "repo.codeScanningEnabled and repo.criticalAlertsOverdue == 0",
+    "scanning-clean": "repo.codeScanningEnabled and repo.mediumPlusAlertsOverdue == 0",
     "dependency-alerts-on-time": "repo.dependabotAlertsOverdue == 0",
-    "verified-owners": "repo.codeownersPresent and repo.unverifiedCodeOwners == 0",
+    "verified-owners": "repo.codeownersPresent and repo.codeOwners >= 1 and repo.unverifiedCodeOwners == 0",
     "default-token-read": "repo.defaultTokenRead",
 }
 

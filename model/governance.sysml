@@ -52,12 +52,16 @@ package Governance {
         attribute offPatternReleaseTags : Integer;
         doc /* code-scanning default setup configured, or analyses exist */
         attribute codeScanningConfigured : Boolean;
+        doc /* GET /repos/{owner}/{repo}/code-scanning/alerts answers (404 when code scanning is not enabled) */
+        attribute codeScanningEnabled : Boolean;
         doc /* open critical code-scanning alerts older than 14 days */
         attribute criticalAlertsOverdue : Integer;
         doc /* open medium-or-higher code-scanning alerts older than 60 days */
         attribute mediumPlusAlertsOverdue : Integer;
         doc /* open Dependabot alerts past 14 (critical) or 60 (high, medium) days */
         attribute dependabotAlertsOverdue : Integer;
+        doc /* distinct users CODEOWNERS names, teams expanded */
+        attribute codeOwners : Integer;
         doc /* code owners not in maintainers.yaml or not verified within 12 months */
         attribute unverifiedCodeOwners : Integer;
         doc /* GET /repos/{owner}/{repo}/actions/permissions/workflow .default_workflow_permissions == read */
@@ -295,7 +299,7 @@ package Governance {
                 doc /* no-open-critical reads: GET /repos/{owner}/{repo}/code-scanning/alerts?state=open -> none with security_severity_level == critical older than 14 days */
                 subject repo : Repository;
                 assume constraint inEffect { (repo.type == Type::tool or repo.type == Type::governance) and (repo.stage == Stage::incubating or repo.stage == Stage::graduated) }
-                require constraint noOpenCritical { repo.codeScanningConfigured and repo.criticalAlertsOverdue == 0 }
+                require constraint noOpenCritical { repo.codeScanningEnabled and repo.criticalAlertsOverdue == 0 }
             }
         }
         package VerifiedCodeOwners {
@@ -304,7 +308,7 @@ package Governance {
                 doc /* verified-owners reads: GET /repos/{owner}/{repo}/contents/{.github/CODEOWNERS|CODEOWNERS|docs/CODEOWNERS} -> every person named is a maintainer in data/maintainers.yaml whose verification is dated within the last 12 months */
                 subject repo : Repository;
                 assume constraint inEffect { repo.tier == Tier::high }
-                require constraint verifiedOwners { repo.codeownersPresent and repo.unverifiedCodeOwners == 0 }
+                require constraint verifiedOwners { repo.codeownersPresent and repo.codeOwners >= 1 and repo.unverifiedCodeOwners == 0 }
             }
         }
         package VulnerabilityRemediation {
@@ -319,7 +323,7 @@ package Governance {
                 doc /* scanning-clean reads: GET /repos/{owner}/{repo}/code-scanning/alerts?state=open -> no alert of medium or higher security severity older than 60 days */
                 subject repo : Repository;
                 assume constraint inEffect { repo.tier == Tier::high }
-                require constraint scanningClean { repo.codeScanningConfigured and repo.mediumPlusAlertsOverdue == 0 }
+                require constraint scanningClean { repo.codeScanningEnabled and repo.mediumPlusAlertsOverdue == 0 }
             }
             requirement def CoordinatedReleases {
                 doc /* coordinated-releases (attested): Fixes for known vulnerabilities are released in coordination with the project's users, following the security policy. */
