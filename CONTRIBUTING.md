@@ -5,7 +5,7 @@ of: a new or corrected check (its requirement def in `model/governance.sysml`, a
 `repos.yaml` entry or attestation (with a link to the evidence), a `registry.ref` bump (with the fixtures refreshed and
 the baseline re-recorded), or a baseline update after a repository's state changed. A change to the model's structure or to the pipeline itself is a maintainer's call: agree it first, then open it as its own PR.
 
-Before opening a PR run `python3 -m pytest -q` (with `OPENSYSML_SYSML` pointing at a `sysml` binary so the evaluation test runs), `python3 model.py --registry <checkout> --check`, and, with `GH_TOKEN` set, `python3 check.py --registry <checkout>`
+Before opening a PR run `python3 -m pytest -q` (the `opensysml` client from `requirements.txt` fetches the pinned `sysml-grpc` on first use), `python3 model.py --registry <checkout> --check`, and, with `GH_TOKEN` set, `python3 check.py --registry <checkout>`
 for the repositories your change touches. Do not add a check the registry does not define; propose it in repo-registry
 instead. The one local rule is `CHECK_APPLIES` in `check.py`, which transcribes an attested check's own statement when it
 binds a narrower kind than its policy; remove an entry once the registry carries that rule. Keep tokens out of the repository: the workflow reads `secrets.GOVERNANCE_TOKEN` only.

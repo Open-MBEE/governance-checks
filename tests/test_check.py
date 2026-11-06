@@ -2,14 +2,12 @@
 import base64
 import datetime as dt
 import json
-import os
 import re
 import pathlib
-import shutil
-import subprocess
 import sys
 
 import pytest
+import yaml
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import check  # noqa: E402
@@ -18,7 +16,13 @@ import model  # noqa: E402
 import sense  # noqa: E402
 
 REGISTRY = pathlib.Path(__file__).parent / "fixtures" / "registry"
-SYSML = os.environ.get("OPENSYSML_SYSML") or shutil.which("sysml")
+PIN = yaml.safe_load((pathlib.Path(__file__).resolve().parents[1] / "repos.yaml").read_text())["opensysml"]
+
+
+@pytest.fixture(scope="module")
+def conn():
+    with check.connect(PIN) as c:
+        yield c
 
 
 class FakeGitHub:
@@ -204,10 +208,9 @@ def test_repositories_follow_repos_yaml():
     assert "semver-tags" in mid and "stable-release-policy" not in mid
 
 
-@pytest.mark.skipif(not SYSML, reason="no sysml binary (set OPENSYSML_SYSML)")
-def test_model_declares_the_facts_the_sensors_produce_and_the_registry_s_requirements():
+def test_model_declares_the_facts_the_sensors_produce_and_the_registry_s_requirements(conn):
     reg = registry()
-    m = model.Model(SYSML)
+    m = model.Model(conn)
     assert m.requirements == sorted(model.requirement_name(p["id"], c["id"]) for p in model.repo_policies(reg)
                                     for kind in ("automated", "attested") for c in p["checks"].get(kind) or [])
     names = set(m.facts)
@@ -222,31 +225,29 @@ def test_model_declares_the_facts_the_sensors_produce_and_the_registry_s_require
     assert produced <= names, produced - names
 
 
-@pytest.mark.skipif(not SYSML, reason="no sysml binary (set OPENSYSML_SYSML)")
-def test_tier_calc_matches_the_kinds_table():
+def test_tier_calc_matches_the_kinds_table(conn):
     reg = registry()
-    args = []
+    m = conn.parse_sources([(str(model.MODEL), model.MODEL.read_text())], strict=True)
     for type_, stages in reg.kinds.items():
-        for stage in stages:
-            args += ["-e", f"Governance::TierOf(Governance::Type::{type_}, Governance::Stage::{stage})"]
-    out = subprocess.run([SYSML, *args, str(model.MODEL)], capture_output=True, text=True).stdout
-    got = re.findall(r"= \[?Tier::(\w+)\]?", out)
-    assert got == [reg.kinds[t][s]["tier"] for t in reg.kinds for s in reg.kinds[t]]
+        for stage, kind in stages.items():
+            [tier] = m.eval(f"Governance::TierOf(Governance::Type::{type_}, Governance::Stage::{stage})")
+            assert tier.literal_id == f"Governance::Tier::{kind['tier']}", f"{type_}/{stage}"
 
 
-@pytest.mark.skipif(not SYSML, reason="no sysml binary (set OPENSYSML_SYSML)")
-def test_opensysml_decides_the_verdicts(tmp_path):
+def test_opensysml_decides_the_verdicts(conn, tmp_path):
     reg = registry()
     entries = [{"name": "o/r", "type": "tool", "stage": "graduated", "attest": {"design-current": "x"}}]
     (tmp_path / "m").mkdir()
     model.generate(reg, {"repos": entries}, tmp_path / "m")
     records = [{"element": model.element("o/r"), "approvalsRequired": 1, "codeOwnerReviewRequired": True, "readmePresent": False,
                 "license": "GPL-3.0"}]
-    verdicts = check.evaluate(SYSML, tmp_path / "m", tmp_path / "b", records)
+    verdicts = check.evaluate(conn, tmp_path / "m", tmp_path / "b", records)
     status = {k[1]: v["status"] for k, v in verdicts.items()}
-    assert status["review-required"] == "holds" and status["readme-present"] == "fails" and status["license-allowed"] == "fails"
-    assert status["design-current"] == "holds" and status["signed-with-provenance"] == "fails"
-    assert status["checks-required"] == "unresolved"
+    assert status["review-required"] == "holds" and status["readme-present"] == "violated" and status["license-allowed"] == "violated"
+    assert status["design-current"] == "holds" and status["signed-with-provenance"] == "violated"
+    assert status["checks-required"] == "undecided"
+    assert verdicts[("o/r", "readme-present")]["condition"] == "repo.readmePresent"
+    assert "no value for feature repo.requiredStatusChecks" in verdicts[("o/r", "checks-required")]["error"]
 
 
 # ----------------------------------------------------------------------------------------------------------- driver
@@ -256,14 +257,14 @@ def test_run_all_maps_verdicts_and_unreadable_facts():
     e = {"name": "o/r", "type": "tool", "stage": "graduated", "attest": {"design-current": "docs/x.md"}}
     said = {c["id"]: sense.Sensed({}, "ok") for _, c, kind in model.in_effect(reg, e) if kind == "automated"}
     said["push-protection-on"] = sense.unreadable("HTTP 403")
-    verdicts = {("o/r", c["id"]): {"status": "holds", "lines": []} for _, c, _ in model.in_effect(reg, e)}
-    verdicts[("o/r", "sbom-attached")] = {"status": "fails", "lines": ["  Required condition evaluated to false: repo.stableRelease and repo.sbomAttached"]}
-    verdicts[("o/r", "push-protection-on")] = {"status": "fails", "lines": []}
-    verdicts[("o/r", "signed-with-provenance")] = {"status": "fails", "lines": []}
+    verdicts = {("o/r", c["id"]): {"status": "holds", "condition": ""} for _, c, _ in model.in_effect(reg, e)}
+    verdicts[("o/r", "sbom-attached")] = {"status": "violated", "condition": "repo.stableRelease and repo.sbomAttached"}
+    verdicts[("o/r", "push-protection-on")] = {"status": "violated", "condition": "repo.pushProtectionOn"}
+    verdicts[("o/r", "signed-with-provenance")] = {"status": "violated", "condition": "repo.attestedSignedWithProvenance"}
     notes = {"o/r": {"said": said, "topic": {"expected": "openmbee-tool", "declared": False}, "id": 7}}
     by = {c["check"]: c for c in check.run_all(reg, [e], verdicts, notes)[0]["checks"]}
     assert by["review-required"]["status"] == "pass"
-    assert by["sbom-attached"]["status"] == "fail" and "evaluated to false" in by["sbom-attached"]["detail"]
+    assert by["sbom-attached"]["status"] == "fail" and by["sbom-attached"]["detail"].endswith("; evaluated to false: repo.stableRelease and repo.sbomAttached")
     assert by["push-protection-on"] == {**by["push-protection-on"], "status": "unreadable", "detail": "HTTP 403"}
     assert by["design-current"]["status"] == "attested" and by["signed-with-provenance"]["status"] == "unattested"
     assert by["archived"]["status"] == "n/a"

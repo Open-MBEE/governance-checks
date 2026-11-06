@@ -3,7 +3,7 @@
 
 Pipeline: model/governance.sysml (hand-written: one requirement def per registry check) is the source; model.py
 derives model/repositories.sysml from repos.yaml; sense.py observes the facts each check reads through `gh api` (build/measurements.json); OpenSysML
-imports the facts into the model and evaluates every `satisfy` assertion (`sysml -import … -satisfy -json`);
+imports the facts into the model and evaluates every `satisfy` assertion through the `opensysml` client;
 this driver maps the verdicts to the table and compares them with baseline.json.
 
 Statuses: pass, fail, exception (fails, but the registry records an accepted deviation), unreadable (a fact the
@@ -18,32 +18,29 @@ import json
 import os
 import pathlib
 import re
-import shutil
-import subprocess
 import sys
 
+import opensysml
 import yaml
 
 from common import GOOD, ORDER, GitHub, Registry
 from model import MODEL, Model, assertion, element, generate, in_effect
 from sense import Repository
 
-SUBJECT = re.compile(r"^satisfy '(?P<name>.+?): (?P<check>[a-z0-9-]+)' by ")
-VERDICT = {"holds": "pass", "fails": "fail", "unresolved": "unreadable"}
+SUBJECT = re.compile(r"^Repositories::(?P<name>.+?): (?P<check>[a-z0-9-]+)$")
+VERDICT = {"holds": "pass", "violated": "fail", "undecided": "unreadable"}
 
 
-def sysml_binary(explicit: str | None) -> str:
-    path = explicit or os.environ.get("OPENSYSML_SYSML") or shutil.which("sysml")
-    if not path:
-        raise SystemExit("construction error: no `sysml` on PATH (set OPENSYSML_SYSML or --sysml)")
-    return path
-
-
-def run_sysml(binary: str, args: list[str], ok_exits=(0,)):
-    proc = subprocess.run([binary, *args], capture_output=True, text=True)
-    if proc.returncode not in ok_exits:
-        raise SystemExit(f"construction error: {binary} {' '.join(args)} exited {proc.returncode}:\n{proc.stdout}{proc.stderr}")
-    return proc.stdout
+def connect(pin: str) -> opensysml.Connection:
+    """A private sysml-grpc service of the pinned OpenSysML release. The installed client must be that release: it
+    ships the release's digests, so the service it downloads is checked against them, and one named by
+    $OPENSYSML_BINARY is refused unless it reports the pinned version."""
+    if f"v{opensysml.__version__}" != pin:
+        raise SystemExit(f"construction error: opensysml {opensysml.__version__} is installed but repos.yaml pins {pin}")
+    try:
+        return opensysml.connect(version=pin)
+    except opensysml.errors.OpenSysMLError as e:
+        raise SystemExit(f"construction error: no sysml-grpc {pin}: {e}")
 
 
 def sense_all(gh: GitHub, registry: Registry, entries: list[dict]):
@@ -69,22 +66,28 @@ def sense_all(gh: GitHub, registry: Registry, entries: list[dict]):
     return records, notes
 
 
-def evaluate(binary: str, model_dir: pathlib.Path, build: pathlib.Path, records: list[dict]) -> dict:
-    """Verdict per (repository, check) from OpenSysML: holds / fails / unresolved, with its report lines."""
+def evaluate(conn: opensysml.Connection, model_dir: pathlib.Path, build: pathlib.Path, records: list[dict]) -> dict:
+    """Verdict per (repository, check) from OpenSysML: holds / violated / undecided, with the condition or error."""
     build.mkdir(parents=True, exist_ok=True)
-    (build / "measurements.json").write_text(json.dumps(records, indent=2) + "\n")
-    # -import binds values in one model file, so the two generated packages are joined for the run.
-    model = build / "model.sysml"
-    model.write_text(MODEL.read_text() + "\n" + (model_dir / "repositories.sysml").read_text())
-    run_sysml(binary, [str(model), "-import", str(build / "measurements.json"), "-convert", "sysml", "-o", str(build / "bound.sysml")])
-    out = run_sysml(binary, ["-satisfy", "-json", str(build / "bound.sysml")], ok_exits=(0, 1, 2))
-    (build / "verdicts.json").write_text(out)
-    report = json.loads(out)
-    verdicts = {}
-    for c in report["checks"]:
-        m = SUBJECT.match(c["subject"])
+    measurements = json.dumps(records, indent=2) + "\n"
+    (build / "measurements.json").write_text(measurements)
+    # import_data binds values in one document, so the two packages are joined for the run.
+    source = MODEL.read_text() + "\n" + (model_dir / "repositories.sysml").read_text()
+    (build / "model.sysml").write_text(source)
+    try:
+        bound = conn.parse_sources([("model.sysml", source)], strict=True).import_data([("measurements.json", measurements)])
+        (build / "bound.sysml").write_text(bound.content)
+        answers = conn.parse_sources([("bound.sysml", bound.content)], strict=True).verify_satisfaction()
+    except opensysml.errors.OpenSysMLError as e:
+        raise SystemExit(f"construction error: OpenSysML could not evaluate the model: {e}")
+    report, verdicts = [], {}
+    for v in answers:
+        record = {"subject": v.element, "status": v.status, "condition": v.condition, "error": v.error}
+        report.append(record)
+        m = SUBJECT.match(v.requirement_id)
         if m:
-            verdicts[(m["name"], m["check"])] = c
+            verdicts[(m["name"], m["check"])] = record
+    (build / "verdicts.json").write_text(json.dumps(report, indent=2) + "\n")
     return verdicts
 
 
@@ -114,8 +117,7 @@ def run_all(registry: Registry, entries: list[dict], verdicts: dict, notes: dict
                             if s.unreadable:
                                 status = "unreadable"  # a verdict over a fact nobody observed is not a verdict
                             elif status == "fail":
-                                cond = next((l.strip() for l in v["lines"] if "evaluated to false" in l), "")
-                                detail = f"{detail}; {cond}" if cond else detail
+                                detail = f"{detail}; evaluated to false: {v['condition']}" if v.get("condition") else detail
                                 if deviation:
                                     status, detail = "exception", f"{detail}; accepted exception: {deviation.get('reason')}"
                     rows.append({"policy": p["id"], "check": c["id"], "kind": kind, "status": status, "detail": detail})
@@ -165,7 +167,6 @@ def main(argv=None):
     ap.add_argument("--config", default="repos.yaml")
     ap.add_argument("--registry", required=True, help="path to a checkout of Open-MBEE/repo-registry at the pinned ref")
     ap.add_argument("--only", action="append", help="repository (owner/name) to measure; repeatable")
-    ap.add_argument("--sysml", help="the OpenSysML `sysml` binary (default: $OPENSYSML_SYSML, then PATH)")
     ap.add_argument("--model", default="model", help="where repositories.sysml is written (governance.sysml is always model/governance.sysml)")
     ap.add_argument("--build", default="build", help="where measurements, the bound model and the verdicts go")
     ap.add_argument("--json", dest="json_out", help="write the results here")
@@ -176,18 +177,18 @@ def main(argv=None):
 
     config = yaml.safe_load(pathlib.Path(args.config).read_text())
     registry = Registry(pathlib.Path(args.registry))
-    binary = sysml_binary(args.sysml)
     entries = config["repos"]
     if args.only:
         entries = [e for e in entries if e["name"] in args.only]
 
     generate(registry, config, pathlib.Path(args.model))
-    facts = Model(binary, MODEL).facts
-    records, notes = sense_all(GitHub(), registry, entries)
-    unknown = sorted({k for r in records for k in r if k != "element" and k not in facts})
-    if unknown:
-        raise SystemExit(f"construction error: sensors produced facts the model does not declare: {', '.join(unknown)}")
-    verdicts = evaluate(binary, pathlib.Path(args.model), pathlib.Path(args.build), records)
+    with connect(config["opensysml"]) as conn:
+        facts = Model(conn, MODEL).facts
+        records, notes = sense_all(GitHub(), registry, entries)
+        unknown = sorted({k for r in records for k in r if k != "element" and k not in facts})
+        if unknown:
+            raise SystemExit(f"construction error: sensors produced facts the model does not declare: {', '.join(unknown)}")
+        verdicts = evaluate(conn, pathlib.Path(args.model), pathlib.Path(args.build), records)
     results = run_all(registry, entries, verdicts, notes)
 
     text = summarize(results)

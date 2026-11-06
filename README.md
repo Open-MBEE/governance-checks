@@ -22,18 +22,22 @@ The model is the source and OpenSysML decides:
    `applies_if`, a tier that is not the kinds table's, a license list that differs).
 2. [`model.py`](model.py) derives [`model/repositories.sysml`](model/repositories.sysml) from `repos.yaml`: one part
    per entry bound to its type, stage and attestations, and one `satisfy` assertion per check in effect; CI fails when
-   the committed file is stale (`model.py --check`). It also reads the model back through `sysml -convert api-json`,
-   so the facts a sensor may produce are the attributes the model declares.
+   the committed file is stale (`model.py --check`). It also reads the model back through OpenSysML's parser (the
+   API's JSON element form, via the `opensysml` client), so the facts a sensor may produce are the attributes the
+   model declares.
 3. [`sense.py`](sense.py) observes the facts, one sensor per check, through `gh api` — a count, a flag, a string,
    never a verdict — into `build/measurements.json`; a fact the token cannot read is left out.
-4. `sysml … -import build/measurements.json` binds the facts into the model and `sysml -satisfy -json` evaluates
-   every assertion; [`check.py`](check.py) maps `holds` / `fails` / `unresolved` to the table, adds the sensors'
-   detail and compares with `baseline.json`.
+4. [`check.py`](check.py) hands the model and the facts to OpenSysML through its Python client
+   ([`opensysml`](https://pypi.org/project/opensysml/)): `import_data` binds the facts into the model
+   (`build/bound.sysml`) and `verify_satisfaction` evaluates every assertion; the verdicts (`holds` / `violated` /
+   `undecided`) map to the table, with the sensors' detail added, and are compared with `baseline.json`.
 
 OpenSysML treats an assumption as a trusted precondition rather than a vacuity condition, so an assertion is only
 generated for a check in effect at the entry's kind; the assumption documents the rule the generator applied.
-The OpenSysML release is pinned in `repos.yaml` (`opensysml:`) and installed by the workflow from its GitHub
-release with the checksum verified.
+The OpenSysML release is pinned in `repos.yaml` (`opensysml:`): `requirements.txt` installs the `opensysml` client
+of that version, `check.py` refuses any other, and the client starts a private `sysml-grpc` of that release, which
+it downloads and checks against the digests it ships (or takes from `$OPENSYSML_BINARY` if that build reports the
+pinned version).
 
 ## What a run produces
 
@@ -72,7 +76,8 @@ python3 check.py --registry /tmp/registry --update-baseline    # accept the curr
 python3 -m pytest -q
 ```
 
-`gh` must be authenticated (`GH_TOKEN`) and `sysml` must be on `PATH` (or `OPENSYSML_SYSML` / `--sysml` must name it; `curl -fsSL https://opensysml.org/install.sh | sh -s -- --version <pin>` installs it). The checks marked `Administration: read` in the policies (push protection,
+`gh` must be authenticated (`GH_TOKEN`); `pip install -r requirements.txt` brings the `opensysml` client, which
+fetches the pinned `sysml-grpc` into `~/.opensysml/bin` on first use. The checks marked `Administration: read` in the policies (push protection,
 Dependabot alerts on, default workflow token, CodeQL default setup) report `unreadable` with a token that lacks it.
 
 ## The scheduled workflow
