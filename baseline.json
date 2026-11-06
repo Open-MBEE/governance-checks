@@ -63,7 +63,7 @@
       },
       {
         "check": "sbom-attached",
-        "status": "fail"
+        "status": "pass"
       },
       {
         "check": "release-immutable",
@@ -79,7 +79,7 @@
       },
       {
         "check": "push-protection-on",
-        "status": "unreadable"
+        "status": "pass"
       },
       {
         "check": "design-current",
@@ -131,7 +131,7 @@
       },
       {
         "check": "default-token-read",
-        "status": "unreadable"
+        "status": "fail"
       },
       {
         "check": "workflows-hardened",
@@ -219,7 +219,7 @@
       },
       {
         "check": "push-protection-on",
-        "status": "unreadable"
+        "status": "fail"
       },
       {
         "check": "design-current",
@@ -271,7 +271,7 @@
       },
       {
         "check": "default-token-read",
-        "status": "unreadable"
+        "status": "fail"
       },
       {
         "check": "workflows-hardened",
@@ -779,7 +779,7 @@
       },
       {
         "check": "push-protection-on",
-        "status": "unreadable"
+        "status": "pass"
       },
       {
         "check": "design-current",
@@ -831,7 +831,7 @@
       },
       {
         "check": "default-token-read",
-        "status": "unreadable"
+        "status": "fail"
       },
       {
         "check": "workflows-hardened",
@@ -867,7 +867,7 @@
       },
       {
         "check": "contributing-present",
-        "status": "fail"
+        "status": "pass"
       },
       {
         "check": "contributing-content",
@@ -899,7 +899,7 @@
       },
       {
         "check": "readme-present",
-        "status": "fail"
+        "status": "pass"
       },
       {
         "check": "sbom-attached",
@@ -919,7 +919,7 @@
       },
       {
         "check": "push-protection-on",
-        "status": "unreadable"
+        "status": "fail"
       },
       {
         "check": "design-current",
@@ -927,7 +927,7 @@
       },
       {
         "check": "security-policy-present",
-        "status": "fail"
+        "status": "pass"
       },
       {
         "check": "private-reporting-on",
@@ -971,7 +971,7 @@
       },
       {
         "check": "default-token-read",
-        "status": "unreadable"
+        "status": "fail"
       },
       {
         "check": "workflows-hardened",
