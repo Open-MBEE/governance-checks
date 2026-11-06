@@ -1,2 +1,3 @@
 pyyaml==6.0.3
 pytest==8.4.1
+opensysml==0.12.1

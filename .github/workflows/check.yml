@@ -22,15 +22,7 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
-      - run: pip install -r requirements.txt
-      - name: Install the pinned OpenSysML release
-        run: |
-          VER=$(python3 -c 'import yaml;print(yaml.safe_load(open("repos.yaml"))["opensysml"])')
-          BASE="https://github.com/Open-MBEE/OpenSysML/releases/download/${VER}"
-          curl -fsSLO "${BASE}/sysml-linux-amd64.tar.gz" && curl -fsSLO "${BASE}/SHA256SUMS.txt"
-          grep ' sysml-linux-amd64.tar.gz$' SHA256SUMS.txt | sha256sum -c -
-          tar xzf sysml-linux-amd64.tar.gz && install -m 755 sysml-linux-amd64 /usr/local/bin/sysml
-          sysml -version | head -1
+      - run: pip install -r requirements.txt  # opensysml, pinned to the release repos.yaml names; it fetches that release's sysml-grpc
       - run: python -m pytest -q
 
   measure:
@@ -45,20 +37,12 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
-      - run: pip install -r requirements.txt
+      - run: pip install -r requirements.txt  # opensysml, pinned to the release repos.yaml names; it fetches that release's sysml-grpc
       - name: Check out repo-registry at the pinned ref
         run: |
           read -r REG REF < <(python3 -c 'import yaml;c=yaml.safe_load(open("repos.yaml"))["registry"];print(c["repo"],c["ref"])')
           git clone --quiet "https://github.com/${REG}.git" registry
           git -C registry checkout --quiet "${REF}"
-      - name: Install the pinned OpenSysML release
-        run: |
-          VER=$(python3 -c 'import yaml;print(yaml.safe_load(open("repos.yaml"))["opensysml"])')
-          BASE="https://github.com/Open-MBEE/OpenSysML/releases/download/${VER}"
-          curl -fsSLO "${BASE}/sysml-linux-amd64.tar.gz" && curl -fsSLO "${BASE}/SHA256SUMS.txt"
-          grep ' sysml-linux-amd64.tar.gz$' SHA256SUMS.txt | sha256sum -c -
-          tar xzf sysml-linux-amd64.tar.gz && install -m 755 sysml-linux-amd64 /usr/local/bin/sysml
-          sysml -version | head -1
       - name: The committed repositories.sysml matches repos.yaml
         run: python3 model.py --registry registry --check
       - name: Measure

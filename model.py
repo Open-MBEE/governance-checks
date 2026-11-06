@@ -3,16 +3,17 @@
 the `Repository` facts, one requirement def per registry check in a package per policy, named after their IDs in
 PascalCase). This module only derives what follows from data: `model/repositories.sysml` from repos.yaml (one part
 per entry and one `satisfy` assertion per check in effect), which checks are in effect (the registry's
-`applies_if`), and a read-only view of the model through OpenSysML's own parser (`sysml -convert api-json`).
+`applies_if`), and a read-only view of the model through OpenSysML's own parser (the API's JSON element form).
 """
 from __future__ import annotations
 
 import argparse
 import json
 import pathlib
-import subprocess
 import sys
+import warnings
 
+import opensysml
 import yaml
 
 from common import CHECK_APPLIES, Registry, applies
@@ -110,13 +111,16 @@ def generate(registry: Registry, config: dict, out_dir: pathlib.Path) -> pathlib
 
 
 class Model:
-    """What the hand-written model declares, read through `sysml -convert api-json`."""
+    """What the hand-written model declares, read through OpenSysML's own parser as the API's JSON element form."""
 
-    def __init__(self, binary: str, path: pathlib.Path = MODEL):
-        proc = subprocess.run([binary, "-convert", "api-json", str(path)], capture_output=True, text=True)
-        if proc.returncode != 0:
-            raise SystemExit(f"construction error: {binary} -convert api-json {path} exited {proc.returncode}:\n{proc.stderr}")
-        elements = json.loads(proc.stdout)
+    def __init__(self, conn: opensysml.Connection, path: pathlib.Path = MODEL):
+        try:
+            parsed = conn.parse_sources([(str(path), path.read_text())], strict=True)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", opensysml.ExperimentalFeatureWarning)
+                elements = json.loads(str(parsed.to_api_json()))
+        except opensysml.errors.OpenSysMLError as e:
+            raise SystemExit(f"construction error: OpenSysML could not read {path}: {e}")
         by_id = {e["@id"]: e for e in elements if "@id" in e}
         self.facts: dict[str, str] = {}
         for e in elements:
