@@ -4,9 +4,10 @@ Measures Open-MBEE repositories against the policies in [repo-registry](https://
 and reports, per repository and per check, what passes, what fails, and what the token could not read.
 
 The registry defines the policies and will eventually sense and report compliance itself (its WP6). Until then this
-repository is the stopgap: every automated check in `data/policies/*.yaml` is one function in [`check.py`](check.py)
-with the same ID, reading the same GitHub endpoint the policy's `reads:` line names, through `gh api`. Nothing is
-decided here that the registry does not define; when the registry grows its own engine, this repository retires.
+repository is the stopgap: every check in `data/policies/*.yaml` becomes a SysML v2 requirement with the same ID,
+its facts read from the GitHub endpoint the policy's `reads:` line names, and OpenSysML decides whether each
+repository satisfies it. Nothing is decided here that the registry does not define; when the registry grows its own
+engine, this repository retires.
 
 ## How it works
 
