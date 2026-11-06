@@ -184,7 +184,7 @@ def test_every_registry_check_is_a_requirement_with_the_policy_s_assumption():
                     assert r.sensor(c["id"]) is not None, c["id"]
                 else:
                     assert f"repo.{model.attested_fact(c['id'])}" in block
-    declared = set(re.findall(r"requirement def (\w+)", MODEL_TEXT))
+    declared = set(re.findall(r"^\s*requirement def (\w+)", MODEL_TEXT, re.M))
     assert declared == {n.rsplit("::", 1)[1] for n in expected}, "requirement defs without a registry check"
     lic = requirement_block("license-by-type", "license-allowed")
     for type_, licenses in reg.allowed_licenses.items():
