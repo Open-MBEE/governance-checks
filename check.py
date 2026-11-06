@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Measure Open-MBEE repositories against the repo-registry policies, with the verdicts decided in SysML v2.
 
-Pipeline: model.py generates the governance model from the pinned registry (one requirement def per check,
-`model/`); sense.py observes the facts each check reads through `gh api` (build/measurements.json); OpenSysML
+Pipeline: model/governance.sysml (hand-written: one requirement def per registry check) is the source; model.py
+derives model/repositories.sysml from repos.yaml; sense.py observes the facts each check reads through `gh api` (build/measurements.json); OpenSysML
 imports the facts into the model and evaluates every `satisfy` assertion (`sysml -import … -satisfy -json`);
 this driver maps the verdicts to the table and compares them with baseline.json.
 
@@ -25,7 +25,7 @@ import sys
 import yaml
 
 from common import GOOD, ORDER, GitHub, Registry
-from model import assertion, element, generate, in_effect
+from model import MODEL, Model, assertion, element, generate, in_effect
 from sense import Repository
 
 SUBJECT = re.compile(r"^satisfy '(?P<name>.+?): (?P<check>[a-z0-9-]+)' by ")
@@ -75,7 +75,7 @@ def evaluate(binary: str, model_dir: pathlib.Path, build: pathlib.Path, records:
     (build / "measurements.json").write_text(json.dumps(records, indent=2) + "\n")
     # -import binds values in one model file, so the two generated packages are joined for the run.
     model = build / "model.sysml"
-    model.write_text((model_dir / "governance.sysml").read_text() + "\n" + (model_dir / "repositories.sysml").read_text())
+    model.write_text(MODEL.read_text() + "\n" + (model_dir / "repositories.sysml").read_text())
     run_sysml(binary, [str(model), "-import", str(build / "measurements.json"), "-convert", "sysml", "-o", str(build / "bound.sysml")])
     out = run_sysml(binary, ["-satisfy", "-json", str(build / "bound.sysml")], ok_exits=(0, 1, 2))
     (build / "verdicts.json").write_text(out)
@@ -166,7 +166,7 @@ def main(argv=None):
     ap.add_argument("--registry", required=True, help="path to a checkout of Open-MBEE/repo-registry at the pinned ref")
     ap.add_argument("--only", action="append", help="repository (owner/name) to measure; repeatable")
     ap.add_argument("--sysml", help="the OpenSysML `sysml` binary (default: $OPENSYSML_SYSML, then PATH)")
-    ap.add_argument("--model", default="model", help="where the generated model is written")
+    ap.add_argument("--model", default="model", help="where repositories.sysml is written (governance.sysml is always model/governance.sysml)")
     ap.add_argument("--build", default="build", help="where measurements, the bound model and the verdicts go")
     ap.add_argument("--json", dest="json_out", help="write the results here")
     ap.add_argument("--summary", help="write the Markdown summary here (default: stdout)")
@@ -182,7 +182,11 @@ def main(argv=None):
         entries = [e for e in entries if e["name"] in args.only]
 
     generate(registry, config, pathlib.Path(args.model))
+    facts = Model(binary, MODEL).facts
     records, notes = sense_all(GitHub(), registry, entries)
+    unknown = sorted({k for r in records for k in r if k != "element" and k not in facts})
+    if unknown:
+        raise SystemExit(f"construction error: sensors produced facts the model does not declare: {', '.join(unknown)}")
     verdicts = evaluate(binary, pathlib.Path(args.model), pathlib.Path(args.build), records)
     results = run_all(registry, entries, verdicts, notes)
 
