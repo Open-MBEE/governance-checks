@@ -4,9 +4,42 @@ Measures Open-MBEE repositories against the policies in [repo-registry](https://
 and reports, per repository and per check, what passes, what fails, and what the token could not read.
 
 The registry defines the policies and will eventually sense and report compliance itself (its WP6). Until then this
-repository is the stopgap: every automated check in `data/policies/*.yaml` is one function in [`check.py`](check.py)
-with the same ID, reading the same GitHub endpoint the policy's `reads:` line names, through `gh api`. Nothing is
-decided here that the registry does not define; when the registry grows its own engine, this repository retires.
+repository is the stopgap: every check in `data/policies/*.yaml` becomes a SysML v2 requirement with the same ID,
+its facts read from the GitHub endpoint the policy's `reads:` line names, and OpenSysML decides whether each
+repository satisfies it. Nothing is decided here that the registry does not define; when the registry grows its own
+engine, this repository retires.
+
+## How it works
+
+The verdicts are decided in SysML v2, by OpenSysML, not in Python:
+
+1. [`model.py`](model.py) generates the governance model from the pinned repo-registry data into
+   [`model/governance.sysml`](model/governance.sysml): the kinds (`Type`, `Stage`, `Tier`), a `Repository` with
+   one attribute per fact the policies read, and one `requirement def` per automated or attested check, grouped in
+   a package per policy, whose assumption is the policy's `applies_if` and whose required constraint is the
+   check's predicate. [`model/repositories.sysml`](model/repositories.sysml) holds one part per entry of
+   `repos.yaml`, bound to its kind and attestations, and one `satisfy` assertion per check in effect for it.
+   Both files are committed so the model can be read, and CI fails when they are stale (`model.py --check`).
+2. [`sense.py`](sense.py) observes the facts, one sensor per check, through `gh api` — a count, a flag, a string,
+   never a verdict — into `build/measurements.json`; a fact the token cannot read is left out.
+3. `sysml … -import build/measurements.json` binds the facts into the model and `sysml -satisfy -json` evaluates
+   every assertion; [`check.py`](check.py) maps `holds` / `fails` / `unresolved` to the table, adds the sensors'
+   detail and compares with `baseline.json`.
+
+Reading a policy therefore means reading its requirement in `model/governance.sysml`, for example:
+
+```sysml
+requirement def ReviewRequired {
+    subject repo : Repository;
+    assume constraint inEffect { repo.tier == Tier::high }
+    require constraint reviewRequired { repo.approvalsRequired >= 1 and repo.codeOwnerReviewRequired }
+}
+```
+
+OpenSysML treats an assumption as a trusted precondition rather than a vacuity condition, so an assertion is only
+generated for a check in effect at the entry's kind; the assumption documents the rule the generator applied.
+The OpenSysML release is pinned in `repos.yaml` (`opensysml:`) and installed by the workflow from its GitHub
+release with the checksum verified.
 
 ## What a run produces
 
@@ -45,7 +78,7 @@ python3 check.py --registry /tmp/registry --update-baseline    # accept the curr
 python3 -m pytest -q
 ```
 
-`gh` must be authenticated (`GH_TOKEN`). The checks marked `Administration: read` in the policies (push protection,
+`gh` must be authenticated (`GH_TOKEN`) and `sysml` must be on `PATH` (or `OPENSYSML_SYSML` / `--sysml` must name it; `curl -fsSL https://opensysml.org/install.sh | sh -s -- --version <pin>` installs it). The checks marked `Administration: read` in the policies (push protection,
 Dependabot alerts on, default workflow token, CodeQL default setup) report `unreadable` with a token that lacks it.
 
 ## The scheduled workflow

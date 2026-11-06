@@ -23,6 +23,14 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt
+      - name: Install the pinned OpenSysML release
+        run: |
+          VER=$(python3 -c 'import yaml;print(yaml.safe_load(open("repos.yaml"))["opensysml"])')
+          BASE="https://github.com/Open-MBEE/OpenSysML/releases/download/${VER}"
+          curl -fsSLO "${BASE}/sysml-linux-amd64.tar.gz" && curl -fsSLO "${BASE}/SHA256SUMS.txt"
+          grep ' sysml-linux-amd64.tar.gz$' SHA256SUMS.txt | sha256sum -c -
+          tar xzf sysml-linux-amd64.tar.gz && install -m 755 sysml-linux-amd64 /usr/local/bin/sysml
+          sysml -version | head -1
       - run: python -m pytest -q
 
   measure:
@@ -43,6 +51,16 @@ jobs:
           read -r REG REF < <(python3 -c 'import yaml;c=yaml.safe_load(open("repos.yaml"))["registry"];print(c["repo"],c["ref"])')
           git clone --quiet "https://github.com/${REG}.git" registry
           git -C registry checkout --quiet "${REF}"
+      - name: Install the pinned OpenSysML release
+        run: |
+          VER=$(python3 -c 'import yaml;print(yaml.safe_load(open("repos.yaml"))["opensysml"])')
+          BASE="https://github.com/Open-MBEE/OpenSysML/releases/download/${VER}"
+          curl -fsSLO "${BASE}/sysml-linux-amd64.tar.gz" && curl -fsSLO "${BASE}/SHA256SUMS.txt"
+          grep ' sysml-linux-amd64.tar.gz$' SHA256SUMS.txt | sha256sum -c -
+          tar xzf sysml-linux-amd64.tar.gz && install -m 755 sysml-linux-amd64 /usr/local/bin/sysml
+          sysml -version | head -1
+      - name: The committed model matches the registry pin
+        run: python3 model.py --registry registry --check
       - name: Measure
         env:
           # GOVERNANCE_TOKEN: fine-grained token with Administration, Code scanning alerts and Dependabot alerts: read
