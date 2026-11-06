@@ -49,8 +49,9 @@ jobs:
           # on the measured repositories. Without it the admin-only checks report "unreadable". Pull requests run
           # whatever check.py the branch carries, so they get only the job token and skip the baseline comparison.
           GH_TOKEN: ${{ github.event_name != 'pull_request' && secrets.GOVERNANCE_TOKEN || github.token }}
-          BASELINE: ${{ github.event_name == 'pull_request' && '' || 'baseline.json' }}
         run: |
+          BASELINE=baseline.json
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then BASELINE=""; fi
           python3 check.py --registry registry --json results.json --summary summary.md --baseline "$BASELINE"
           cat summary.md >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
