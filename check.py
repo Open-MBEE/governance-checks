@@ -15,6 +15,7 @@ against baseline.json or a construction error (bad configuration, gh missing).
 from __future__ import annotations
 
 import argparse
+import base64
 import datetime as dt
 import fnmatch
 import json
@@ -29,7 +30,11 @@ import yaml
 SEMVER = re.compile(r"^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 CODEOWNERS_PATHS = (".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS")
 SBOM_GLOBS = ("*.spdx.json", "*.spdx", "*.cdx.json", "*bom*.json")
-ORDER = ["fail", "unreadable", "unattested", "unimplemented", "pass", "attested", "n/a"]
+ORDER = ["fail", "unreadable", "unattested", "unimplemented", "pass", "exception", "attested", "n/a"]
+GOOD = {"pass", "exception", "attested", "n/a"}
+# Transcribed from an attested check's statement when it binds a narrower kind than its policy
+# (semantic-versioning: "For graduated tools: ..."). Drop an entry once the registry carries the rule.
+CHECK_APPLIES = {"stable-release-policy": {"attr": "stage", "eq": "graduated"}}
 
 
 def now() -> dt.datetime:
@@ -99,6 +104,8 @@ class Registry:
         self.type_topics = {v: k for k, v in kinds.get("type_topics", {}).items()}
         m = yaml.safe_load((root / "data/maintainers.yaml").read_text())
         self.maintainers = m.get("maintainers") or {}
+        dev = yaml.safe_load((root / "data/deviations.yaml").read_text()) or {}
+        self.deviations = {(str(d["repo_id"]), d["policy"]): d for d in dev.get("deviations") or []}
         lic = next(p for p in self.policies if p["id"] == "license-by-type")
         self.allowed_licenses = lic["allowed_licenses"]
 
@@ -161,12 +168,15 @@ class Repo:
         return next((r for r in rules if r.get("type") == type_), None)
 
     def codeowners_text(self):
+        """(path, text, None) when found, (None, None, None) when absent, (None, None, status) when unreadable."""
+        denied = None
         for path in CODEOWNERS_PATHS:
             status, data = self.gh.api(f"repos/{self.full}/contents/{path}")
             if status == 200:
-                import base64
-                return path, base64.b64decode(data["content"]).decode()
-        return None, None
+                return path, base64.b64decode(data["content"]).decode(), None
+            if status != 404:
+                denied = status
+        return None, None, denied
 
     def latest_release(self):
         return self.gh.api(f"repos/{self.full}/releases/latest")
@@ -211,7 +221,9 @@ class Repo:
 
     # --- codeowners
     def check_codeowners_present(self):
-        path, _ = self.codeowners_text()
+        path, _, denied = self.codeowners_text()
+        if denied:
+            return ("unreadable", f"contents HTTP {denied}")
         return ("pass", path) if path else ("fail", "no CODEOWNERS at .github/, root or docs/")
 
     def check_codeowners_valid(self):
@@ -237,13 +249,17 @@ class Repo:
 
     # --- dependency-management
     def check_dependabot_alerts_on(self):
+        # GraphQL answers for any reader; the REST endpoint returns 404 both for "disabled" and "no admin read".
+        status, data = self.gh.graphql(
+            "query($owner:String!,$name:String!){repository(owner:$owner,name:$name){hasVulnerabilityAlertsEnabled}}",
+            owner=self.owner, name=self.name)
+        if status == 200 and ((data.get("data") or {}).get("repository") or {}).get("hasVulnerabilityAlertsEnabled") is not None:
+            on = data["data"]["repository"]["hasVulnerabilityAlertsEnabled"]
+            return ("pass" if on else "fail", f"hasVulnerabilityAlertsEnabled={on}")
         status, _ = self.gh.api(f"repos/{self.full}/vulnerability-alerts")
         if status == 204:
             return ("pass", "enabled")
-        if status == 404:
-            return ("fail", "disabled (token has admin read)") if self.data.get("permissions", {}).get("admin") \
-                else ("unreadable", "404 without admin read")
-        return ("unreadable", f"HTTP {status}")
+        return ("unreadable", f"HTTP {status}: disabled or no Administration read")
 
     # --- history-protection
     def _rule_or_classic(self, rule_type, classic_key, label):
@@ -270,6 +286,9 @@ class Repo:
         allowed = self.registry.allowed_licenses.get(self.type, [])
         if spdx in allowed:
             return ("pass", spdx)
+        dev = self.registry.deviations.get((str(self.data.get("id")), "license-by-type"))
+        if dev:
+            return ("exception", f"{spdx}; accepted exception: {dev.get('reason')} (approved by {dev.get('approved_by')})")
         return ("fail", f"{spdx or 'missing'}; allowed for {self.type}: {', '.join(allowed)}")
 
     # --- release-integrity
@@ -361,9 +380,9 @@ class Repo:
         late = []
         for a in alerts:
             sev = (a.get("security_advisory") or {}).get("severity")
-            age = (now() - parse_time(a["created_at"])).days
-            if (sev == "critical" and age > 14) or (sev in ("high", "medium") and age > 60):
-                late.append(f"{a['dependency']['package']['name']}({sev},{age}d)")
+            age = now() - parse_time(a["created_at"])
+            if (sev == "critical" and age > dt.timedelta(days=14)) or (sev in ("high", "medium") and age > dt.timedelta(days=60)):
+                late.append(f"{a['dependency']['package']['name']}({sev},{age.days}d)")
         return ("pass" if not late else "fail", f"{len(alerts)} open; late: {', '.join(late[:5]) or 'none'}")
 
     def check_scanning_clean(self):
@@ -379,15 +398,23 @@ class Repo:
 
     # --- verified-code-owners
     def check_verified_owners(self):
-        path, text = self.codeowners_text()
+        path, text, denied = self.codeowners_text()
+        if denied:
+            return ("unreadable", f"contents HTTP {denied}")
         if not text:
             return ("fail", "no CODEOWNERS")
-        handles = sorted({h for line in text.splitlines() if line.strip() and not line.lstrip().startswith("#")
-                          for h in re.findall(r"@([A-Za-z0-9-]+)(?![/\w])", line)})
+        lines = [l for l in text.splitlines() if l.strip() and not l.lstrip().startswith("#")]
+        handles = {h for line in lines for h in re.findall(r"@([A-Za-z0-9-]+)(?![/\w])", line)}
+        problems, unreadable = [], []
+        for org, slug in sorted({t for line in lines for t in re.findall(r"@([A-Za-z0-9-]+)/([A-Za-z0-9_.-]+)", line)}):
+            status, members = self.gh.api(f"orgs/{org}/teams/{slug}/members?per_page=100", paginate=True)
+            if status != 200:
+                unreadable.append(f"@{org}/{slug}: team members HTTP {status}")
+                continue
+            handles.update(m["login"] for m in members)
         by_login = {m.get("login"): m for m in self.registry.maintainers.values()}
         cutoff = now() - dt.timedelta(days=365)
-        problems = []
-        for h in handles:
+        for h in sorted(handles):
             m = by_login.get(h)
             if not m:
                 problems.append(f"{h}: not in maintainers.yaml")
@@ -395,7 +422,11 @@ class Repo:
             v = m.get("verified") or m.get("verified_on") or (m.get("verification") or {}).get("date")
             if not v or parse_time(str(v) + ("T00:00:00+00:00" if len(str(v)) == 10 else "")) < cutoff:
                 problems.append(f"{h}: no verification within 12 months")
-        return ("pass" if not problems else "fail", "; ".join(problems) or f"{len(handles)} owner(s) verified")
+        if problems:
+            return ("fail", "; ".join(problems + unreadable))
+        if unreadable:
+            return ("unreadable", "; ".join(unreadable))
+        return ("pass", f"{len(handles)} owner(s) verified")
 
     # --- workflow-least-privilege
     def check_default_token_read(self):
@@ -405,11 +436,11 @@ class Repo:
         v = data.get("default_workflow_permissions")
         return ("pass" if v == "read" else "fail", f"default_workflow_permissions={v}")
 
-    # --- type topic (kinds.yaml type_topics; operators declare type with it)
-    def check_type_topic(self):
+    def type_topic(self):
+        """The `openmbee-<type>` topic (kinds.yaml type_topics) operators declare their type with: not a policy
+        check, reported beside the table."""
         topic = self.registry.type_topics.get(self.type)
-        topics = self.data.get("topics") or []
-        return ("pass" if topic in topics else "fail", f"topics={','.join(topics) or 'none'}; expected {topic}")
+        return {"expected": topic, "declared": topic in (self.data.get("topics") or [])}
 
 
 # ------------------------------------------------------------------------------------------------------ org checks
@@ -478,6 +509,7 @@ def run_entry(gh, registry, entry):
         if (scope == "org") != isinstance(subject, Org):
             continue
         in_effect = applies(policy.get("applies_if"), subject.attrs())
+        deviation = registry.deviations.get((str(getattr(subject, "data", {}).get("id")), policy["id"]))
         for check in policy["checks"].get("automated") or []:
             fn = getattr(subject, "check_" + check["id"].replace("-", "_"), None)
             if not in_effect:
@@ -486,19 +518,21 @@ def run_entry(gh, registry, entry):
                 status, detail = "unimplemented", ""
             else:
                 status, detail = fn()
+                if status == "fail" and deviation:
+                    status, detail = "exception", f"{detail}; accepted exception: {deviation.get('reason')}"
             rows.append({"policy": policy["id"], "check": check["id"], "kind": "automated", "status": status, "detail": detail})
         for check in policy["checks"].get("attested") or []:
-            if not in_effect:
+            if not in_effect or not applies(CHECK_APPLIES.get(check["id"]), subject.attrs()):
                 status, detail = "n/a", ""
             elif check["id"] in attest:
                 status, detail = "attested", str(attest[check["id"]])
             else:
                 status, detail = "unattested", "no entry under attest: in repos.yaml"
             rows.append({"policy": policy["id"], "check": check["id"], "kind": "attested", "status": status, "detail": detail})
+    out = {"name": subject.full, "type": subject.type, "stage": subject.stage, "tier": subject.tier, "checks": rows}
     if isinstance(subject, Repo):
-        status, detail = subject.check_type_topic()
-        rows.append({"policy": "type-topic", "check": "type-topic", "kind": "automated", "status": status, "detail": detail})
-    return {"name": subject.full, "type": subject.type, "stage": subject.stage, "tier": subject.tier, "checks": rows}
+        out["topic"] = subject.type_topic()
+    return out
 
 
 def summarize(results):
@@ -517,19 +551,22 @@ def summarize(results):
         na = sorted({c["policy"] for c in r["checks"] if c["status"] == "n/a"})
         if na:
             out.append(f"\nNot in effect at {r['type']}/{r['stage']}: {', '.join(na)}")
+        if r.get("topic"):
+            t = r["topic"]
+            out.append(f"\nType topic `{t['expected']}`: {'declared' if t['declared'] else 'not declared'}")
         out.append("")
     return "\n".join(out)
 
 
 def regressions(results, baseline):
-    """A check that passed (or was attested) in the baseline and no longer does."""
-    good = {"pass", "attested", "n/a"}
+    """A check that passed (or was attested) in the baseline and no longer does; a formerly passing check that
+    became unreadable counts too, since the run has lost that coverage (usually a token losing a permission)."""
     out = []
     for r in results:
         base = {(c["check"]): c["status"] for c in (baseline.get(r["name"]) or {}).get("checks", [])}
         for c in r["checks"]:
             before = base.get(c["check"])
-            if before in good and c["status"] not in good and c["status"] != "unreadable":
+            if before in GOOD and c["status"] not in GOOD:
                 out.append(f"{r['name']}: {c['policy']}/{c['check']} {before} -> {c['status']} ({c['detail']})")
     return out
 
@@ -541,7 +578,7 @@ def main(argv=None):
     ap.add_argument("--only", action="append", help="repository (owner/name) to measure; repeatable")
     ap.add_argument("--json", dest="json_out", help="write the results here")
     ap.add_argument("--summary", help="write the Markdown summary here (default: stdout)")
-    ap.add_argument("--baseline", default="baseline.json")
+    ap.add_argument("--baseline", default="baseline.json", help="empty string: do not compare")
     ap.add_argument("--update-baseline", action="store_true")
     args = ap.parse_args(argv)
 
@@ -561,6 +598,8 @@ def main(argv=None):
     if args.json_out:
         pathlib.Path(args.json_out).write_text(json.dumps(results, indent=2) + "\n")
 
+    if not args.baseline:
+        return 0
     base_path = pathlib.Path(args.baseline)
     snapshot = {r["name"]: {"checks": [{"check": c["check"], "status": c["status"]} for c in r["checks"]]} for r in results}
     if args.update_baseline:

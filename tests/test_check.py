@@ -1,4 +1,5 @@
 """Unit tests with a fake GitHub: each check's predicate, applicability, and the regression rule."""
+import base64
 import datetime as dt
 import pathlib
 import sys
@@ -97,8 +98,30 @@ def test_codeowners():
 
 
 def test_dependabot_alerts_on():
+    gql = lambda on: {"graphql": (200, {"data": {"repository": {"hasVulnerabilityAlertsEnabled": on}}})}
+    assert repo(gql(True)).check_dependabot_alerts_on()[0] == "pass"
+    assert repo(gql(False)).check_dependabot_alerts_on()[0] == "fail"
     assert repo({"repos/o/r/vulnerability-alerts": (204, None)}).check_dependabot_alerts_on()[0] == "pass"
     assert repo({"repos/o/r/vulnerability-alerts": (404, {})}).check_dependabot_alerts_on()[0] == "unreadable"
+
+
+def test_codeowners_unreadable_and_teams():
+    denied = {f"repos/o/r/contents/{p}": (403, {}) for p in check.CODEOWNERS_PATHS}
+    assert repo(denied).check_codeowners_present()[0] == "unreadable"
+    assert repo(denied).check_verified_owners()[0] == "unreadable"
+    team = {"repos/o/r/contents/.github/CODEOWNERS": (200, {"content": base64.b64encode(b"* @o/core\n").decode()})}
+    assert repo(team).check_verified_owners() == ("unreadable", "@o/core: team members HTTP 404")
+    team["orgs/o/teams/core/members"] = (200, [{"login": "someone"}])
+    status, detail = repo(team).check_verified_owners()
+    assert status == "fail" and "someone: not in maintainers.yaml" in detail
+
+
+def test_license_exception():
+    r = repo({"repos/o/r": (200, {"id": 7, "default_branch": "main", "license": {"spdx_id": "GPL-3.0"}})})
+    assert r.check_license_allowed()[0] == "fail"
+    r.registry.deviations[("7", "license-by-type")] = {"reason": "depends on GPL code", "approved_by": "x"}
+    status, detail = r.check_license_allowed()
+    assert status == "exception" and "GPL-3.0; accepted exception" in detail
 
 
 def test_license_by_type():
@@ -155,14 +178,17 @@ def test_dependency_alerts_on_time():
                     {"security_advisory": {"severity": "critical"}, "created_at": iso(3), "dependency": {"package": {"name": "x"}}}])
     status, detail = repo({"repos/o/r/dependabot/alerts": alerts}).check_dependency_alerts_on_time()
     assert status == "fail" and "n3(high,61d)" in detail
+    half_day_over = (200, [{"security_advisory": {"severity": "critical"}, "dependency": {"package": {"name": "c"}},
+                            "created_at": (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=14, hours=12)).isoformat()}])
+    assert repo({"repos/o/r/dependabot/alerts": half_day_over}).check_dependency_alerts_on_time()[0] == "fail"
 
 
 def test_default_token_and_topic():
     r = repo({"repos/o/r/actions/permissions/workflow": (200, {"default_workflow_permissions": "write"})})
     assert r.check_default_token_read()[0] == "fail"
     assert repo({}).check_default_token_read()[0] == "unreadable"
-    assert repo({}).check_type_topic()[0] == "pass"
-    assert repo({}, type="media").check_type_topic()[0] == "fail"
+    assert repo({}).type_topic() == {"expected": "openmbee-tool", "declared": True}
+    assert repo({}, type="media").type_topic()["declared"] is False
 
 
 def test_run_entry_applicability_and_attestations():
@@ -176,13 +202,18 @@ def test_run_entry_applicability_and_attestations():
     by = {c["check"]: c["status"] for c in high["checks"]}
     assert by["design-current"] == "attested" and by["signed-with-provenance"] == "unattested"
     assert by["sbom-attached"] == "fail"
+    assert "type-topic" not in by and high["topic"]["declared"] is False
+    mid = check.run_entry(gh, reg, {"name": "o/r", "type": "tool", "stage": "incubating"})
+    by = {c["check"]: c["status"] for c in mid["checks"]}
+    assert by["semver-tags"] != "n/a" and by["stable-release-policy"] == "n/a"
+    assert {c["check"]: c["status"] for c in high["checks"]}["stable-release-policy"] == "unattested"
 
 
-def test_regressions_only_on_good_to_bad():
+def test_regressions_on_good_to_bad_or_unreadable():
     results = [{"name": "o/r", "checks": [
         {"policy": "p", "check": "a", "status": "fail", "detail": ""},
         {"policy": "p", "check": "b", "status": "unreadable", "detail": ""},
         {"policy": "p", "check": "c", "status": "fail", "detail": ""}]}]
     baseline = {"o/r": {"checks": [{"check": "a", "status": "pass"}, {"check": "b", "status": "pass"}, {"check": "c", "status": "fail"}]}}
     regs = check.regressions(results, baseline)
-    assert len(regs) == 1 and regs[0].startswith("o/r: p/a pass -> fail")
+    assert [r.split(" (")[0] for r in regs] == ["o/r: p/a pass -> fail", "o/r: p/b pass -> unreadable"]

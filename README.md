@@ -12,13 +12,16 @@ decided here that the registry does not define; when the registry grows its own 
 
 - A Markdown table per repository in the Actions job summary (and `summary.md` in the run's artifact).
 - `results.json` with every check's status and detail.
-- An exit code of 1 only when a check that passed in [`baseline.json`](baseline.json) no longer does. Known open items
-  stay visible in the table without turning every run red; a newly disabled ruleset or removed file does.
+- An exit code of 1 only when a check that passed in [`baseline.json`](baseline.json) no longer does (including one
+  that became `unreadable`, which means the run lost that coverage). Known open items stay visible in the table
+  without turning every run red; a newly disabled ruleset or removed file does.
 
-Statuses: `pass`, `fail`, `unreadable` (the token lacks the permission the policy names), `attested` /
-`unattested` (the policy's attested checks, recorded under `attest:` in `repos.yaml` with a link to the evidence),
-`n/a` (the policy is not in effect at that type/stage), `unimplemented` (org-level checks that need the registry's
-own scripts).
+Statuses: `pass`, `fail`, `exception` (fails the predicate but the registry's `data/deviations.yaml` records an
+accepted exception for that repository and policy), `unreadable` (the token lacks the permission the policy names),
+`attested` / `unattested` (the policy's attested checks, recorded under `attest:` in `repos.yaml` with a link to the
+evidence), `n/a` (the policy is not in effect at that type/stage), `unimplemented` (org-level checks that need the
+registry's own scripts). Below each table the `openmbee-<type>` topic (the registry's `type_topics`) is reported as
+declared or not; it is how operators declare a type, not a policy check, and never affects the exit code.
 
 ## Configuration
 
@@ -48,9 +51,10 @@ Dependabot alerts on, default workflow token, CodeQL default setup) report `unre
 ## The scheduled workflow
 
 [`.github/workflows/check.yml`](.github/workflows/check.yml) runs the unit tests and then the measurement every
-Monday, on manual dispatch, and on pull requests. It reads with `secrets.GOVERNANCE_TOKEN` when set, otherwise the
-job's own token (which can read only this repository's public data, so most checks on other repositories come back
-`unreadable`).
+Monday, on manual dispatch, and on pull requests. Scheduled, push and dispatch runs read with
+`secrets.GOVERNANCE_TOKEN` when set, otherwise the job's own token (which can read only public data, so the admin-only
+checks come back `unreadable`). Pull-request runs execute the branch's own `check.py`, so they never see the secret
+and skip the baseline comparison (`--baseline ""`); they prove the script runs, not the repositories' state.
 
 To set the token: create a fine-grained personal access token (or a GitHub App installation token) with
 **Administration: read**, **Code scanning alerts: read**, **Dependabot alerts: read**, **Metadata: read** and

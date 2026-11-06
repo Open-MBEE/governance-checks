@@ -1,0 +1,7 @@
+# PROVISIONAL until the maintainers approve the policies (WP0, maintainer approval 2). WP2a D-3.
+# Accepted exceptions to a policy for one repository (WP0 PO-8): a reason and the approving maintainer, recorded by a
+# pull request that an owner merges. An accepted exception shows green, marked as an exception, and never expires
+# until removed. None are recorded yet: any off-list license is red until the maintainers decide.
+status: provisional
+provisional_until: "WP0 maintainer approval 2: the policies"
+deviations: []

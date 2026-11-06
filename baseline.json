@@ -35,7 +35,7 @@
       },
       {
         "check": "dependabot-alerts-on",
-        "status": "unreadable"
+        "status": "pass"
       },
       {
         "check": "dependency-policy",
@@ -63,7 +63,7 @@
       },
       {
         "check": "sbom-attached",
-        "status": "pass"
+        "status": "fail"
       },
       {
         "check": "release-immutable",
@@ -136,10 +136,6 @@
       {
         "check": "workflows-hardened",
         "status": "unattested"
-      },
-      {
-        "check": "type-topic",
-        "status": "fail"
       }
     ]
   },
@@ -179,7 +175,7 @@
       },
       {
         "check": "dependabot-alerts-on",
-        "status": "unreadable"
+        "status": "pass"
       },
       {
         "check": "dependency-policy",
@@ -247,7 +243,7 @@
       },
       {
         "check": "stable-release-policy",
-        "status": "unattested"
+        "status": "n/a"
       },
       {
         "check": "code-scanning-configured",
@@ -280,10 +276,6 @@
       {
         "check": "workflows-hardened",
         "status": "unattested"
-      },
-      {
-        "check": "type-topic",
-        "status": "fail"
       }
     ]
   },
@@ -424,10 +416,6 @@
       {
         "check": "workflows-hardened",
         "status": "n/a"
-      },
-      {
-        "check": "type-topic",
-        "status": "fail"
       }
     ]
   },
@@ -568,10 +556,6 @@
       {
         "check": "workflows-hardened",
         "status": "n/a"
-      },
-      {
-        "check": "type-topic",
-        "status": "fail"
       }
     ]
   },
@@ -712,10 +696,6 @@
       {
         "check": "workflows-hardened",
         "status": "n/a"
-      },
-      {
-        "check": "type-topic",
-        "status": "fail"
       }
     ]
   },
@@ -755,7 +735,7 @@
       },
       {
         "check": "dependabot-alerts-on",
-        "status": "unreadable"
+        "status": "pass"
       },
       {
         "check": "dependency-policy",
@@ -856,10 +836,6 @@
       {
         "check": "workflows-hardened",
         "status": "attested"
-      },
-      {
-        "check": "type-topic",
-        "status": "pass"
       }
     ]
   },
@@ -883,11 +859,11 @@
       },
       {
         "check": "codeowners-present",
-        "status": "fail"
+        "status": "pass"
       },
       {
         "check": "codeowners-valid",
-        "status": "unreadable"
+        "status": "pass"
       },
       {
         "check": "contributing-present",
@@ -899,7 +875,7 @@
       },
       {
         "check": "dependabot-alerts-on",
-        "status": "unreadable"
+        "status": "pass"
       },
       {
         "check": "dependency-policy",
@@ -919,7 +895,7 @@
       },
       {
         "check": "license-allowed",
-        "status": "fail"
+        "status": "pass"
       },
       {
         "check": "readme-present",
@@ -967,7 +943,7 @@
       },
       {
         "check": "stable-release-policy",
-        "status": "unattested"
+        "status": "n/a"
       },
       {
         "check": "code-scanning-configured",
@@ -1000,10 +976,6 @@
       {
         "check": "workflows-hardened",
         "status": "unattested"
-      },
-      {
-        "check": "type-topic",
-        "status": "fail"
       }
     ]
   },
@@ -1144,10 +1116,6 @@
       {
         "check": "workflows-hardened",
         "status": "n/a"
-      },
-      {
-        "check": "type-topic",
-        "status": "fail"
       }
     ]
   },
@@ -1288,10 +1256,6 @@
       {
         "check": "workflows-hardened",
         "status": "n/a"
-      },
-      {
-        "check": "type-topic",
-        "status": "fail"
       }
     ]
   }
