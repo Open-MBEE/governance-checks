@@ -1,0 +1,43 @@
+# PROVISIONAL until the maintainers approve the named maintainers (WP0, maintainer approval 5). WP3 D-3.
+#
+# A PLACEHOLDER (WP5f): the list below is demonstrative, not a decision. The co-founders choose the first owners and
+# maintainers, and the supervisor records their decision here (docs/maintainer-policy.md, "How the first owners and
+# maintainers are chosen"); `owners` is empty until then.
+#
+# Provenance: drawn from a mix of current public GitHub data and the supervisor's experience as part of the org's
+# current leadership (WP3 decisions, "Provenance of the list"). Neither is verified. This whole list is provisional.
+#
+# Who may be named here (WP3 OD1, OD2, R-8): people whose Open-MBEE membership is public, or people the supervisor
+# names as already publicly known as maintainers elsewhere. No concealed org role is ever revealed: for a listed
+# person whose membership isn't public, the match check reports "membership not public" (yellow), never their role.
+status: provisional
+provisional_until: "WP0 maintainer approval 5: the named maintainers"
+target_size: 5            # a starting point (supervisor: "5 is a good number"; "maintainers can be more")
+
+maintainers:                           # keyed by GitHub's numeric user ID, with the login as a column (WP5b F-05)
+  6760647:
+    login: aftimg
+    name: Chris Delp
+    basis: Co-founder with Robert Karban; an org owner with public membership (supervisor).
+  10465438:
+    login: mzargham
+    name: Michael Zargham
+    basis: Part of the org's current leadership; liaison with NumFOCUS, the fiscal sponsor (supervisor).
+  60184290:
+    login: rkarban
+    name: Robert Karban
+    basis: A founder, publicly named as an admin elsewhere (supervisor).
+  1014891:
+    login: HuiJun
+    name: Jason Han
+    basis: Publicly named as a maintainer elsewhere; release authority for OpenSysML, credentialing under way (supervisor).
+    release_authority:
+      - {repo_id: 1318945311, name: "OpenSysML"}
+
+# Admin power over OpenMBEE held outside GitHub's owner role (installed apps, other platforms, the fiscal-sponsor
+# relationship), declared by a pull request that an owner merges (policy maintainers-match). None declared yet.
+other_powers: []
+
+# The owners: 2 or 3 of the maintainers above, by GitHub user ID (maintainer policy 2; org-few-owners). Empty until
+# the co-founders' decision is recorded (WP5f D-3); scripts/validate.py checks it.
+owners: []

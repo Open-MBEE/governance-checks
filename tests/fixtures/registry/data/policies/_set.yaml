@@ -1,0 +1,4 @@
+# PROVISIONAL until the maintainers approve the policies (WP0, maintainer approval 2).
+# The policy set as a whole (WP5b F-13): its status is one fact about every policy, stored once.
+status: provisional
+provisional_until: "WP0 maintainer approval 2: the policies"

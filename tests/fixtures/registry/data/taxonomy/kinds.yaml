@@ -1,0 +1,295 @@
+# PROVISIONAL until the maintainers approve the taxonomy (WP0, maintainer approval 1).
+# WP1 D-2. The kinds: type x stage (WP1 R-3), each mapped to exactly one tier (WP1 R-6, WP0 R-17).
+# A repo has a type and a stage in the lifecycle (registry.yaml); the kind is the point they name, and it gives the
+# repo its tier. Policies attach to a type, a stage or a tier (WP0 A1; WP4e). Nothing here gives a repo a tier directly.
+#
+# `recommend_when` is a deterministic predicate over snapshot attributes (WP1 R-5). It only RECOMMENDS a
+# repo's initial kind, as guidance. Governors assign kinds (WP1 A3).
+# The rules must be mutually exclusive: a repo that matches two kinds, or none, is shown as unclassified.
+#
+# Predicate language (read by scripts/recommend.py, which names no kind, type or signal; WP1 R-7):
+#   {all: [p, ...]}  {any: [p, ...]}  {not: p}  {signal: <name>}
+#   {attr: <name>, eq: v | in: [..] | matches: <regex> | gt: n | gte: n | lt: n}
+#   `matches` is a case-insensitive regex search; on a list attribute it is true if any element matches.
+#   `recommend_when: false` means the rules never recommend that kind; only a governor assigns it.
+# Attributes are the snapshot fields plus the derived ones listed in scripts/recommend.py.
+#
+# The `meaning` texts are written for anyone to read (WP0 R-4). In them, a "governor" is one of the OpenMBEE
+# maintainers, who decide each repository's kind.
+status: provisional
+provisional_until: "WP0 maintainer approval 1: the taxonomy"
+
+types:
+  tool: Software that people install, run, or build on.
+  media: The website, documentation, teaching material, example models, and the organization's shared pages and images.
+  research: Ideas explored in public, often by one person working alone. Often archived once work on it stops.
+  governance: >-
+    How the organization itself is governed. Only two things are this type: the repo-registry repository, which
+    holds the organization's rules for its repositories, and the administration of the GitHub organization. The administration isn't a repository,
+    but it gets a kind in the same way, so that its controls can be checked too.
+
+# Lifecycle stages are adopted from the CNCF and OpenSSF project lifecycles (WP0/WP1 amendment A4).
+# The map from their documents, with sources, is docs/lifecycle-stage-map.md.
+stages:
+  sandbox: >-
+    The first stage, for early and experimental work. Big changes, including ones that break things for users, are
+    expected. One person working alone is fine. For a tool, it has no numbered release yet, or its releases are still
+    numbered below 1.0 (for example 0.4.2). This stage, like the other three, is taken from two large open-source
+    foundations, the Cloud Native Computing Foundation (CNCF) and the Open Source Security Foundation (OpenSSF),
+    which call it "Sandbox".
+  incubating: >-
+    The middle stage. The work is past the experimental phase and becoming stable, with fewer breaking changes, and
+    people are starting to use it. For a tool, it has released version 1.0 or later. The open-source foundations
+    CNCF and OpenSSF call this stage "Incubating".
+  graduated: >-
+    The most mature stage. For software or media, it is widely used in real work, with several maintainers, settled
+    governance and steady, careful releases. For the administration of the organization, it means governance that is
+    settled and in everyday use. The automatic recommendations never suggest this stage. The maintainers who run the
+    OpenMBEE organization on GitHub give it, based on evidence. The open-source foundations CNCF and OpenSSF call
+    this stage "Graduated".
+  archived: >-
+    Finished. The repository is archived on GitHub, so nobody can change it any more. This is the last stage. Same
+    stage as the open-source foundations CNCF and OpenSSF call "Archived".
+
+# Signals are named building blocks the kinds share. They are data, not code.
+# A repository's code owners can declare its type with one of these GitHub topics (WP5c). A topic declares the type
+# only; the stage still comes from the rules (for a tool, its releases) or a maintainer's decision. A repository can
+# carry up to 20 topics; exactly one of these declares its type, and none, or more than one, declares nothing.
+# Precedence (WP5c OD1): the rules' candidate, then the topic, then a maintainer's merged decision (registry.yaml).
+type_topics:
+  openmbee-tool: tool
+  openmbee-media: media
+  openmbee-research: research
+  openmbee-governance: governance
+
+signals:
+  archived: {attr: archived, eq: true}
+  fork: {attr: fork, eq: true}
+  semver_release: {attr: has_semver_release, eq: true}
+  semver_1_or_later: {attr: latest_semver_major, gte: 1}
+  commits_last_3_months: {attr: commits_last_3_months, gt: 0}
+  commits_last_12_months: {attr: commits_last_12_months, gt: 0}
+  media_words:
+    any:
+      - attr: name
+        matches: '\.github\.io$|\.openmbee\.org$|^\.github$|^docs$|readthedocs|documentation|graphic-assets|user-forum|enhancement-proposals|specifications|cookbook|faq|-model$|_model$|\.sysml$'
+      - attr: description
+        matches: '\bwebsite\b|\bsite\b|documentation|\btutorial\b|\bfaq\b|\bmodel of\b|system model|\bassets\b|\bforum\b|\bproposals\b'
+  research_words:
+    any:
+      - attr: name
+        matches: 'research|experiment|simulation|prompts'
+      - attr: description
+        matches: 'research|formali[sz]ation|probabilistic'
+  code_language:
+    all:
+      - {attr: primary_language, matches: '.'}
+      - not: {attr: primary_language, in: [HTML, CSS, Jupyter Notebook, TeX, Markdown]}
+  # "example" alone decides no type: purpose does, "to learn for ourselves or communicate to others" (WP5c).
+  example_words:
+    any:
+      - {attr: name, matches: '(^|[-_.])examples?([-_.]|$)'}
+      - {attr: description, matches: '\bexamples?\b'}
+  # Notebook-only or model-only repositories are media, unless a research word applies (WP4 fit analysis 3).
+  notebook_or_model_only:
+    all:
+      - not: {signal: code_language}
+      - any:
+          - {attr: primary_language, eq: Jupyter Notebook}
+          - {attr: root_files, matches: '\.(ipynb|sysml|kerml|xmi|mdzip)$'}
+  # A fork is classified by our diff from its upstream (WP5c D-3, OD2): with changes of ours it is an exploration
+  # of how tools work together (research), or media where our changes are mostly models; a fork with no changes of
+  # ours on its default branch is a mirror, left unclassified (below).
+  fork_ours: {all: [{signal: fork}, {attr: fork_ahead_by, gt: 0}]}
+  fork_mirror: {all: [{signal: fork}, {not: {signal: fork_ours}}]}
+  fork_models: {all: [{signal: fork_ours}, {attr: fork_mostly_models, eq: true}]}
+  owned_here: {not: {signal: fork}}
+  type_declared: {not: {attr: declared_type, eq: null}}
+  inferred_media:
+    all:
+      - not: {signal: research_words}
+      - any:
+          - all: [{signal: owned_here}, {signal: media_words}]
+          - all: [{signal: owned_here}, {signal: notebook_or_model_only}]
+          - {signal: fork_models}
+  inferred_research:
+    any:
+      - all: [{signal: owned_here}, {signal: research_words}, {not: {signal: media_words}}]
+      - all: [{signal: fork_ours}, {not: {signal: fork_models}}]
+  inferred_tool: {all: [{signal: owned_here}, {signal: code_language}, {not: {signal: media_words}}, {not: {signal: research_words}}]}
+  is_media: {any: [{attr: declared_type, eq: media}, {all: [{not: {signal: type_declared}}, {signal: inferred_media}]}]}
+  is_research: {any: [{attr: declared_type, eq: research}, {all: [{not: {signal: type_declared}}, {signal: inferred_research}]}]}
+  is_tool: {any: [{attr: declared_type, eq: tool}, {all: [{not: {signal: type_declared}}, {signal: inferred_tool}]}]}
+  live: {not: {signal: archived}}
+
+# Each signal in plain words, for the wiki's Taxonomy page (WP5d D-1): a kind's rule is read out from these.
+# Written as a statement about the repository; a `not` in a rule reads as "it is not the case that ...".
+explain:
+  archived: It is archived on GitHub.
+  fork: It is a fork of another project's repository.
+  semver_release: It has a release numbered in the vX.Y.Z (semantic versioning) style.
+  semver_1_or_later: Its latest numbered release is version 1.0 or later.
+  commits_last_3_months: It has commits on its default branch in the last 3 months.
+  commits_last_12_months: It has commits on its default branch in the last 12 months.
+  media_words: >-
+    Its name or description reads as media: a website, documentation, a tutorial, an FAQ, a forum, proposals or
+    specifications, assets, or a model (for example a name ending in .github.io or -model).
+  research_words: Its name or description reads as research (research, an experiment, a simulation, prompts, a formalization).
+  code_language: GitHub reports a programming language for it (not HTML, CSS, Jupyter Notebook, TeX or Markdown).
+  example_words: Its name or description says it is an example or examples.
+  notebook_or_model_only: It has no programming language, and holds notebooks or model files (.ipynb, .sysml, .kerml, .xmi, .mdzip).
+  fork_ours: It is a fork with commits of ours ahead of its upstream, on the default branch.
+  fork_mirror: It is a fork with no commits of ours ahead of its upstream (a mirror).
+  fork_models: It is a fork with commits of ours, and most of the files we changed are model files.
+  owned_here: It is not a fork; the project started here.
+  type_declared: Its code owners declared its type with exactly one openmbee-<type> topic.
+  inferred_media: >-
+    The rules read it as media: no research words, and either it started here with media words or holds only
+    notebooks or models, or it is a fork whose changes of ours are mostly models.
+  inferred_research: >-
+    The rules read it as research: it started here with research words and no media words, or it is a fork with
+    changes of ours that are not mostly models.
+  inferred_tool: "The rules read it as a tool: it started here, has a programming language, and has no media or research words."
+  is_media: >-
+    Its type is media: its code owners declared it with the openmbee-media topic, or, with no type topic, it has no
+    research words and either started here with media words or holds only notebooks or models, or it is a fork whose
+    changes of ours are mostly models.
+  is_research: >-
+    Its type is research: its code owners declared it with the openmbee-research topic, or, with no type topic, it
+    started here with research words and no media words, or it is a fork with changes of ours that are not mostly
+    models.
+  is_tool: >-
+    Its type is tool: its code owners declared it with the openmbee-tool topic, or, with no type topic, it started
+    here, GitHub reports a programming language for it, and it has no media or research words.
+  live: It is not archived.
+
+kinds:                                 # keyed by type, then stage: the composite key (WP5b OD2); the name
+                                       # "type/stage" is derived shorthand, for display
+  # --- tools ---
+  tool:
+    sandbox:
+      tier: low
+      meaning: >-
+        A tool that is still experimenting: no numbered release yet, or releases still numbered below 1.0. It needs a
+        named person to look after it, and controls are kept light so that experiments stay easy. When it releases
+        version 1.0, it becomes an incubating tool.
+      recommend_when:
+        all: [{signal: is_tool}, {signal: live}, {not: {signal: semver_1_or_later}}]
+    incubating:
+      tier: medium
+      meaning: >-
+        A tool at version 1.0 or later that people are starting to rely on. It gets moderate controls. It becomes a
+        graduated tool when the maintainers judge that it is widely used and well governed.
+      recommend_when:
+        all: [{signal: is_tool}, {signal: live}, {signal: semver_1_or_later}]
+    graduated:
+      tier: high
+      meaning: >-
+        A mature tool that many people depend on in real work. Every release needs careful control, so it gets the
+        strictest controls. The automatic recommendations never suggest this kind. The maintainers who run the OpenMBEE organization on GitHub choose it directly.
+      recommend_when: false
+    archived:
+      tier: none
+      meaning: An archived tool. Nobody can change it any more.
+      recommend_when:
+        all: [{signal: is_tool}, {signal: archived}]
+
+  # --- media ---
+  media:
+    sandbox:
+      tier: low
+      meaning: Draft or trial media. The automatic recommendations never suggest this kind. The maintainers who run the OpenMBEE organization on GitHub choose it directly.
+      recommend_when: false
+    incubating:
+      tier: medium
+      meaning: >-
+        Media that people use and rely on, such as the website, documentation and teaching material.
+      recommend_when:
+        all: [{signal: is_media}, {signal: live}]
+    graduated:
+      tier: medium
+      meaning: >-
+        Mature media that the whole community depends on. Media gets at most moderate controls, so that it stays easy to
+        contribute to. The automatic recommendations never suggest this kind. The maintainers who run the OpenMBEE organization on GitHub choose it directly.
+      recommend_when: false
+    archived:
+      tier: none
+      meaning: Archived media. Nobody can change it any more.
+      recommend_when:
+        all: [{signal: is_media}, {signal: archived}]
+
+  # --- research ---
+  research:
+    sandbox:
+      tier: low
+      meaning: >-
+        Ideas being explored in public, often by one person. Controls are kept light on purpose, so that this kind of
+        work stays easy.
+      recommend_when:
+        all: [{signal: is_research}, {signal: live}]
+    incubating:
+      tier: low
+      meaning: Research that others are starting to use or build on. The automatic recommendations never suggest this kind. The maintainers who run the OpenMBEE organization on GitHub choose it directly.
+      recommend_when: false
+    graduated:
+      tier: low
+      meaning: >-
+        Established research that others rely on, kept available, for example alongside a paper. Research stays
+        lightly controlled. The automatic recommendations never suggest this kind. The maintainers who run the OpenMBEE organization on GitHub choose it directly.
+      recommend_when: false
+    archived:
+      tier: none
+      meaning: Archived research. Nobody can change it any more.
+      recommend_when:
+        all: [{signal: is_research}, {signal: archived}]
+
+  # --- governance (WP0 A2, A4; WP1 amendment 3): always assigned, never recommended ---
+    # Two things have the governance type: the repo-registry repository, which holds the organization's rules for its
+    # repositories, and the administration of the GitHub organization itself. They differ only by stage. Friction
+    # rises with the stage, as for every other type (WP4c).
+  governance:
+    sandbox:
+      tier: low
+      meaning: >-
+        Governance that is still being set up and tried out. Light controls, like a sandbox tool, so that it can change
+        quickly. repo-registry has this kind until the maintainers buy in and work together to calibrate it.
+      recommend_when: false
+    incubating:
+      tier: medium
+      meaning: >-
+        Governance that the maintainers have taken up and are calibrating together, before it becomes the canonical
+        source. Controls like an incubating tool. Nothing has this kind yet; repo-registry is expected to pass through it.
+      recommend_when: false
+    graduated:
+      tier: high
+      meaning: >-
+        Established governance: the administration of the GitHub organization itself, and repo-registry once it is
+        accepted as the canonical source. The strictest controls, because whatever governs must be at least as strict
+        as what it governs. It carries the organization's policies and the repository policies together.
+      recommend_when: false
+
+# Kinds in the type x stage cross product that are deliberately left out, each with its reason (WP1 R-3).
+omitted:
+  governance:
+    archived: Only two things have the governance type, and neither is archived.
+
+# Why a repo is unclassified: the first `when` that holds gives the reason. Data, so the engine names nothing.
+unclassified_reasons:
+  - when: {signal: fork_mirror}
+    reason: "A mirror: a copy of its upstream project, with no changes of ours on its default branch."
+  - when: {attr: declared_type, eq: governance}
+    reason: "Declares governance with a topic: governance kinds are assigned only, by a maintainer's decision."
+  - when: {all: [{signal: example_words}, {not: {any: [{signal: media_words}, {signal: research_words}, {signal: code_language}, {signal: notebook_or_model_only}]}}]}
+    reason: "An example: media if it is there to show others, research if it is there to learn for ourselves. Its code owners can declare the type with an openmbee-<type> topic."
+  - when: {all: [{signal: media_words}, {signal: research_words}]}
+    reason: Its name or description reads as both media and research.
+  - when: {all: [{signal: archived}, {not: {any: [{signal: media_words}, {signal: research_words}, {signal: code_language}]}}]}
+    reason: Archived, with no type signal. Inert whatever its type.
+  - when: {not: {any: [{signal: media_words}, {signal: research_words}, {signal: code_language}, {signal: notebook_or_model_only}]}}
+    reason: "No type signal. No media or research words, no programming language, and no type topic. Its code owners can declare the type with an openmbee-<type> topic."
+
+# Flags are shown in the recommendation report, never in the kind list. They don't change a kind.
+flags:
+  archive-candidate:
+    meaning: Not archived, and no commits on the default branch in the last 12 months.
+    when: {all: [{signal: owned_here}, {signal: live}, {not: {signal: commits_last_12_months}}]}

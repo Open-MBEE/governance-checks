@@ -1,0 +1,52 @@
+# Repositories measured against the repo-registry policies, and the type/stage each one is measured at.
+# The registry's own snapshot decides a repository's real kind; the entry here says which bar we hold it to,
+# so a repository can be measured at the tier it is heading for before the registry moves it there.
+#
+# attest: one entry per attested check (the policy's checks.attested[].id), pointing at the evidence.
+registry:
+  repo: Open-MBEE/repo-registry
+  ref: 858cf1f0839256b92e2d86ff9b3276f6cb5a8945
+
+repos:
+  - name: Open-MBEE/flexo-change-adapter
+    type: tool
+    stage: graduated           # measured at the high bar on purpose (registry kind today: tool/sandbox)
+    attest:
+      contributing-content: https://github.com/Open-MBEE/flexo-change-adapter/blob/develop/CONTRIBUTING.md
+      dependency-policy: https://github.com/Open-MBEE/flexo-change-adapter/blob/develop/CONTRIBUTING.md#dependencies
+      service-pins: package.json pins every direct dependency to an exact version
+      disclosure-followed: https://github.com/Open-MBEE/flexo-change-adapter/blob/develop/SECURITY.md
+      design-current: https://github.com/Open-MBEE/flexo-change-adapter/blob/develop/docs/security-design.md
+      workflows-hardened: all workflows pin action SHAs and set permissions per job (.github/workflows)
+      coordinated-releases: https://github.com/Open-MBEE/flexo-change-adapter/blob/develop/SECURITY.md
+      no-built-executables: source tree holds no built executables
+      signed-with-provenance: https://github.com/Open-MBEE/flexo-change-adapter/blob/develop/.github/workflows/release.yml
+  - name: Open-MBEE/OpenSysML
+    type: tool
+    stage: graduated
+    attest:
+      contributing-content: https://github.com/Open-MBEE/OpenSysML/blob/develop/CONTRIBUTING.md
+      disclosure-followed: https://github.com/Open-MBEE/OpenSysML/blob/develop/SECURITY.md
+      coordinated-releases: https://github.com/Open-MBEE/OpenSysML/blob/develop/SECURITY.md
+      signed-with-provenance: https://github.com/Open-MBEE/OpenSysML/blob/develop/docs/releasing.md
+  - name: Open-MBEE/OpenSysML-Extensions-Library
+    type: tool
+    stage: incubating
+  - name: Open-MBEE/OpenSysML-REDK-Skills
+    type: tool
+    stage: sandbox
+  - name: Open-MBEE/airflow-provider-opensysml
+    type: tool
+    stage: sandbox
+  - name: Open-MBEE/sysml-toolkit
+    type: tool
+    stage: sandbox
+  - name: Open-MBEE/OpenSysML-FAQ
+    type: media
+    stage: incubating
+  - name: Open-MBEE/opensysml.github.io
+    type: media
+    stage: incubating
+  - name: Open-MBEE/governance-checks
+    type: tool
+    stage: incubating

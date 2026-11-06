@@ -1,0 +1,39 @@
+# PROVISIONAL until the maintainers approve the policies (WP0, maintainer approval 2). WP3 D-2.
+id: org-base-permission
+scope: org                               # what the policy governs: a repository, or the org's administration
+name: Least-privilege base permission
+meaning: Members of the organization get only read access to its repositories by default. More access is granted per repository,
+  through teams.
+applies_if:
+  all:
+  - attr: type
+    eq: governance
+  - attr: stage
+    eq: graduated
+github:
+  mechanism: 'Organization setting: base permissions for members'
+  docs:
+  - https://docs.github.com/en/organizations/managing-user-access-to-your-organizations-repositories/managing-repository-roles/setting-base-permissions-for-an-organization
+  - https://docs.github.com/en/rest/orgs/orgs
+  available_on:
+  - free
+  - team
+  - enterprise
+checks:
+  automated:
+  - id: base-permission-read
+    reads: 'GET /orgs/{org} -> default_repository_permission in (read, none) (returned only to owners: yellow otherwise)'
+    permission: 'organization owner (Administration: read)'
+  attested: []
+cites:
+  cisa: none
+  nist:
+  - AC-6
+  openssf:
+  - TI-3
+  ssdf:
+  - PS.1
+setup:                                   # the SOP's set-up steps, in order (WP5b: SOPs are rendered from this file)
+- 'First, make sure everyone who needs to write keeps that access: give each repository''s contributors write (or admin) through a team on that repository. Otherwise, lowering the base permission cuts them off.'
+- Then an organization owner opens Settings, then Member privileges.
+- Set Base permissions to Read (or No permission).

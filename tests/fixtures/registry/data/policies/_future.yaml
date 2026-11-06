@@ -1,0 +1,24 @@
+# Features and plans (WP3 G-3). OpenMBEE is on GitHub Free (data/sources/github-plan.yaml).
+# needs_research: features the policies use whose availability for the Open-MBEE org isn't confirmed yet. Empty:
+#   immutable releases and rulesets were confirmed by the supervisor (data/sources/github-plan.yaml, confirmed_in_org).
+# features: features no policy may require today (Enterprise-only), flagged for a future upgrade.
+needs_research: {}
+features:
+  org-rulesets:
+    reason: Organization-wide rulesets need GitHub Team or Enterprise.
+    strengthens: [history-protection, change-review]
+    note: set once for all repositories
+  audit-log-api:
+    reason: The organization audit-log API is Enterprise Cloud only.
+    strengthens: [maintainers-match]
+    note: who changed roles, and when
+  saml-sso:
+    reason: SAML single sign-on is Enterprise Cloud only.
+    strengthens: [org-two-factor]
+  custom-roles:
+    reason: Custom organization and repository roles are Enterprise Cloud only.
+    strengthens: []
+    note: fine-grained maintainer powers, for the maintainer policy (docs/maintainer-policy.md), which is a document, not a policy
+  owner-only-collaborator-invites:
+    reason: Restricting outside-collaborator invitations to owners is Enterprise Cloud only.
+    strengthens: [org-few-owners]

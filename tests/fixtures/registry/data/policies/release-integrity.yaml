@@ -1,0 +1,63 @@
+# PROVISIONAL until the maintainers approve the policies (WP0, maintainer approval 2). WP2 D-2.
+id: release-integrity
+scope: repository                               # what the policy governs: a repository, or the org's administration
+name: Trustworthy releases
+meaning: Graduated tools publish each release with a software bill of materials (SBOM), sign it, publish build provenance,
+  and keep built executables out of the source repository.
+applies_if:
+  all:
+  - attr: type
+    eq: tool
+  - attr: stage
+    eq: graduated
+github:
+  mechanism: Release assets, immutable releases and artifact attestations
+  docs:
+  - https://docs.github.com/en/rest/releases/releases
+  - https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations/using-artifact-attestations-to-establish-provenance-for-builds
+  available_on:
+  - free
+  - team
+  - enterprise
+checks:
+  automated:
+  - id: sbom-attached
+    reads: GET /repos/{owner}/{repo}/releases/latest -> assets include a file named like *.spdx.json, *.spdx, *.cdx.json or
+      *bom*.json
+    permission: 'Contents: read'
+  - id: release-immutable
+    reads: GET /repos/{owner}/{repo}/releases/latest -> immutable == true
+    permission: 'Contents: read'
+  attested:
+  - id: signed-with-provenance
+    statement: 'Release artifacts are signed, and a build record (provenance) is published with them that meets SLSA Build
+      Level 3: built by GitHub Actions on GitHub-hosted runners through a reusable workflow, with GitHub artifact attestations.'
+  - id: no-built-executables
+    statement: The source repository holds no built executables, except test fixtures that are documented as such.
+cites:
+  cisa:
+  - CISA-P-SBOM-RELEASE
+  - CISA-P-RELEASE-MARK
+  nist:
+  - SR-4
+  - SA-10(1)
+  - SA-10(6)
+  openssf:
+  - TG-5
+  - TG-6
+  - TG-7
+  - TG-8
+  dodcio:
+  - 2.C(5)
+  ssdf:
+  - PS.2
+  - PS.3
+  c_scrm:
+  - SR-4
+setup:                                   # the SOP's set-up steps, in order (WP5b: SOPs are rendered from this file)
+- 'Build releases in CI (continuous integration: the automated build that runs on GitHub Actions). If you don''t have a release workflow yet, start from GitHub''s Actions guide for your language.'
+- 'In that workflow, generate an SBOM (a software bill of materials: a list of everything the release contains, in SPDX or CycloneDX format), and attach it to each release.'
+- Turn on Immutable releases (Settings, then General), so published releases can't be changed.
+- Sign release artifacts and publish their build record (provenance) with GitHub artifact attestations, built through a reusable workflow on GitHub-hosted runners. That combination meets SLSA Build Level 3. SLSA (Supply-chain Levels for Software Artifacts) is a standard for how far a build record can be trusted. See https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations
+- Keep built executables out of the source repository. Build them from source in CI.
+- Record the attestations below.

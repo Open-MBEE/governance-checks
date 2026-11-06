@@ -1,0 +1,66 @@
+# PROVISIONAL until the maintainers approve the policies (WP0, maintainer approval 2). WP5e D-3.
+id: verified-code-owners
+scope: repository                               # what the policy governs: a repository, or the org's administration
+name: Verified code owners
+meaning: The code owners of a high-tier repository (graduated tools, and the organization's governance) are named
+  maintainers whom an organization owner has verified, out of band, in the last 12 months. The owner verifies their
+  identity; that they are not a sanctioned party, nor located or ordinarily resident in a comprehensively sanctioned
+  jurisdiction; and that they have no affiliation with an organization of concern. Each verification is recorded in
+  data/maintainers.yaml, with the facts the maintainer consents to publish (legal name, country of residence,
+  affiliation). No verification, or one more than 12 months old, means the person may not be a code owner here. The
+  policy is for code owners, not contributors. It restricts who may approve and merge changes, not who may contribute
+  them, and every contribution passes through a verified code owner's review.
+applies_if:
+  attr: tier
+  eq: high
+github:
+  mechanism: CODEOWNERS in each high-tier repository, listing only verified maintainers; the verification records in this
+    repository's data/maintainers.yaml, merged by an owner
+  docs:
+  - https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+  - https://docs.github.com/en/site-policy/other-site-policies/github-and-trade-controls
+  available_on:
+  - free
+  - team
+  - enterprise
+checks:
+  automated:
+  - id: verified-owners
+    reads: GET /repos/{owner}/{repo}/contents/{.github/CODEOWNERS|CODEOWNERS|docs/CODEOWNERS} -> every person named is a
+      maintainer in data/maintainers.yaml whose verification is dated within the last 12 months
+    permission: 'Contents: read'
+  attested: []
+cites:
+  cisa:
+  - CISA-C4-COMMUNITY
+  nist:
+  - PS-3
+  openssf: []
+  dodcio:
+  - 2.C
+  - 2.C(2)
+  - 2.C(6)
+  ofac:
+  - SDN
+  - 560.204
+  ssdf:
+  - PS.1
+  c_scrm:
+  - SR-4
+  - SR-6
+secondary_notes: Nationality is not a criterion (WP5e OD1). OFAC's sanctions attach to designated parties and to
+  persons in sanctioned jurisdictions; GitHub applies them by location, not nationality (its trade-controls page, above).
+  No sanctions floor is set for contributors at this time. A floor (for example, no contributions from SDN-listed
+  parties) was considered and declined, because screening contributors is unrealistic without a means of screening
+  OpenMBEE is prepared to opt into, and because control at code review, by verified code owners, is adequate.
+setup:                                   # the SOP's set-up steps, in order (WP5b: SOPs are rendered from this file)
+- A maintainer who will be a code owner of a high-tier repository adds their legal name, country of residence and
+  affiliation under `verification` in their entry in data/maintainers.yaml, in a commit they author. That commit is their
+  consent to publish these facts; no other personal detail is recorded.
+- An organization owner who is not that maintainer verifies their identity out of band (no identity document is
+  recorded), checks them against OFAC's SDN list and comprehensively sanctioned jurisdictions on that date, and
+  confirms they have no affiliation with an organization of concern.
+- The owner adds `verified_by` (their own GitHub user ID), `date` and `policy_version` (the commit that last changed this
+  policy's file) to the entry, and merges the pull request.
+- List only verified maintainers in the CODEOWNERS of each high-tier repository, and renew every verification every 12
+  months, at the maintainers' annual review.

@@ -1,0 +1,56 @@
+# PROVISIONAL until the maintainers approve the policies (WP0, maintainer approval 2). WP2 D-2.
+id: dependency-management
+scope: repository                               # what the policy governs: a repository, or the org's administration
+name: Know and watch your dependencies
+meaning: 'Tools from version 1.0, and the registry, turn on Dependabot alerts and publish a short dependency policy: how new
+  dependencies are chosen and how they are kept up to date. Services the project provides pin their direct dependencies.'
+applies_if:
+  all:
+  - attr: type
+    in:
+    - tool
+    - governance
+  - attr: stage
+    in:
+    - incubating
+    - graduated
+github:
+  mechanism: Dependabot alerts (with the dependency graph, always on for public repos)
+  docs:
+  - https://docs.github.com/en/code-security/dependabot/dependabot-alerts/about-dependabot-alerts
+  - https://docs.github.com/en/rest/repos/repos
+  available_on:
+  - free
+  - team
+  - enterprise
+checks:
+  automated:
+  - id: dependabot-alerts-on
+    reads: GET /repos/{owner}/{repo}/vulnerability-alerts -> 204 (404 means off only when the caller has admin read; otherwise
+      yellow)
+    permission: 'Administration: read'
+  attested:
+  - id: dependency-policy
+    statement: A dependency policy is published (in CONTRIBUTING or its own file) and followed.
+  - id: service-pins
+    statement: 'If the project provides an internet or infrastructure service, its direct dependencies are pinned: each one
+      names an exact version (for example 2.4.1, not 2.x).'
+cites:
+  cisa:
+  - CISA-P-DEP-SCAN
+  - CISA-P-CI-PATCH-AUTO
+  nist:
+  - RA-5
+  - CM-8
+  openssf:
+  - TI-5
+  - TI-6
+  iso12207:
+  - 6.4.13
+  dodcio:
+  - 2.C(3)
+setup:                                   # the SOP's set-up steps, in order (WP5b: SOPs are rendered from this file)
+- Go to Settings, then Advanced Security (or Code security), and turn on Dependabot alerts.
+- 'Write a short dependency policy, in `CONTRIBUTING.md` or its own file: how new dependencies are chosen and how they are kept up to date.'
+- 'If the project provides a service, pin its direct dependencies: name an exact version for each (for example 2.4.1, not 2.x).'
+- Record the attestations below.

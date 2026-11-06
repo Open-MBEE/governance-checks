@@ -1,0 +1,41 @@
+# PROVISIONAL until the maintainers approve the policies (WP0, maintainer approval 2). WP2 D-2.
+id: archive-notice
+scope: repository                               # what the policy governs: a repository, or the org's administration
+name: Clear end of support
+meaning: Before a repository is archived, its README says that support has ended and points to any known active forks. Repositories
+  archived before this policy existed count as compliant as they are.
+applies_if:
+  attr: stage
+  eq: archived
+github:
+  mechanism: Repository archiving, with an end-of-support note in the README
+  docs:
+  - https://docs.github.com/en/repositories/archiving-a-github-repository/archiving-repositories
+  available_on:
+  - free
+  - team
+  - enterprise
+checks:
+  automated:
+  - id: archived
+    reads: GET /repos/{owner}/{repo} -> archived == true
+    permission: 'Metadata: read'
+  attested:
+  - id: end-of-support-note
+    statement: The README says that support has ended, and names any known active forks. (Repositories archived before this
+      policy existed are exempt.)
+cites:
+  cisa:
+  - CISA-P-EOS-MARK
+  - CISA-P-EOS-FORKS
+  - CISA-P-EOS-PUBLISH
+  nist:
+  - SA-22
+  openssf: []
+  iso12207:
+  - 6.4.14
+setup:                                   # the SOP's set-up steps, in order (WP5b: SOPs are rendered from this file)
+- Before archiving, add a note at the top of the README saying that support has ended, with the date, and naming any known active forks.
+- In the same commit, add the attestation entry below to the repository's `ATTESTATIONS.yaml`. Once a repository is archived, nobody can commit to it, so this has to come first. An archived repository is read at this final commit, so no release is needed for it.
+- Then archive the repository (Settings, then General, then Archive this repository).
+- Repositories archived before this policy existed need nothing more.

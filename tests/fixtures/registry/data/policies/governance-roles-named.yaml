@@ -1,0 +1,40 @@
+# PROVISIONAL until the maintainers approve the policies (WP0, maintainer approval 2). WP3 D-2.
+id: governance-roles-named
+scope: org                               # what the policy governs: a repository, or the org's administration
+name: Governance roles are held openly
+meaning: Everyone who holds governance power over the organization, its owners and its named maintainers, makes their organization
+  membership public, so that who governs OpenMBEE is visible. Until this policy is ratified, nobody is named against their
+  choice, and anyone may step down instead.
+applies_if:
+  all:
+  - attr: type
+    eq: governance
+  - attr: stage
+    eq: graduated
+github:
+  mechanism: Public organization membership
+  docs:
+  - https://docs.github.com/en/account-and-profile/setting-up-and-managing-your-personal-account-on-github/managing-your-membership-in-organizations/publicizing-or-hiding-organization-membership
+  - https://docs.github.com/en/rest/orgs/members
+  available_on:
+  - free
+  - team
+  - enterprise
+checks:
+  automated:
+  - id: owners-public
+    reads: GET /orgs/{org}/members?role=admin compared with GET /orgs/{org}/public_members -> no owner has concealed membership
+      (reported as a count only)
+    permission: 'organization member (Members: read)'
+  - id: maintainers-public
+    reads: GET /orgs/{org}/public_members -> every person named in data/maintainers.yaml is listed
+    permission: public (no credential needed)
+  attested: []
+cites:
+  cisa:
+  - CISA-C4-COMMUNITY
+  nist: none
+  openssf: []
+setup:                                   # the SOP's set-up steps, in order (WP5b: SOPs are rendered from this file)
+- Each owner, and each named maintainer, opens the organization's People page, finds their own name, and sets their membership to Public.
+- Anyone who prefers not to be named publicly can step down from the governance role instead. That is a choice, not a failure.

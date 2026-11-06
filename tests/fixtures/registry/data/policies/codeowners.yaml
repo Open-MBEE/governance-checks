@@ -1,0 +1,40 @@
+# PROVISIONAL until the maintainers approve the policies (WP0, maintainer approval 2). WP2 D-2.
+id: codeowners
+scope: repository                               # what the policy governs: a repository, or the org's administration
+name: Named owners
+meaning: Every live repository names the people who look after it, in a CODEOWNERS file. That file is the authoritative list
+  of the repository's operators.
+applies_if:
+  not:
+    attr: stage
+    eq: archived
+github:
+  mechanism: CODEOWNERS file at .github/CODEOWNERS, CODEOWNERS or docs/CODEOWNERS
+  docs:
+  - https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+  available_on:
+  - free
+  - team
+  - enterprise
+checks:
+  automated:
+  - id: codeowners-present
+    reads: GET /repos/{owner}/{repo}/contents/{.github/CODEOWNERS|CODEOWNERS|docs/CODEOWNERS} -> first of these returns 200
+    permission: 'Contents: read'
+  - id: codeowners-valid
+    reads: GET /repos/{owner}/{repo}/codeowners/errors -> errors is empty
+    permission: 'Contents: read'
+  attested: []
+cites:
+  cisa:
+  - CISA-C4-COMMUNITY
+  nist:
+  - CM-5
+  openssf: []
+  dodcio:
+  - 2.C(1)
+secondary_notes: OpenSSF requires at least one maintainer at Sandbox (project lifecycle).
+setup:                                   # the SOP's set-up steps, in order (WP5b: SOPs are rendered from this file)
+- Create `.github/CODEOWNERS` (or `CODEOWNERS` at the root, or `docs/CODEOWNERS`).
+- Name at least one person who looks after the repository, for example a line `* @your-github-username`. The people named here are the repository's operators.
+- Open the file on GitHub. If GitHub shows an error banner, fix the lines it points to.

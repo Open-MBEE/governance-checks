@@ -1,0 +1,48 @@
+# PROVISIONAL until the maintainers approve the policies (WP0, maintainer approval 2). WP2 D-2.
+id: change-review
+scope: repository                               # what the policy governs: a repository, or the org's administration
+name: Reviewed changes
+meaning: High-tier repositories (graduated tools, and the registry) need at least one approving review from a code owner,
+  and passing checks, before a change is merged to the default branch.
+applies_if:
+  attr: tier
+  eq: high
+github:
+  mechanism: A ruleset (preferred) or a branch protection rule requiring an approving code-owner review and passing status
+    checks
+  docs:
+  - https://docs.github.com/en/rest/repos/rules
+  - https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets
+  available_on:
+  - free
+  - team
+  - enterprise
+checks:
+  automated:
+  - id: review-required
+    reads: GET /repos/{owner}/{repo}/branches/{default_branch}/protection -> required_pull_request_reviews.required_approving_review_count
+      >= 1 and .require_code_owner_reviews, or the same in a pull_request rule of GET .../rules/branches/{default_branch}
+    permission: 'Administration: read (classic protection); Metadata: read (rulesets)'
+  - id: checks-required
+    reads: GET /repos/{owner}/{repo}/branches/{default_branch}/protection -> required_status_checks is set, or GET .../rules/branches/{default_branch}
+      has a required_status_checks rule
+    permission: 'Administration: read (classic protection); Metadata: read (rulesets)'
+  attested: []
+cites:
+  cisa:
+  - CISA-P-CODE-REVIEW
+  - CISA-C4-CONDUCT
+  nist:
+  - CM-5(4)
+  - SA-11(4)
+  - CM-3
+  openssf:
+  - TG-4
+  dodcio:
+  - 2.C(6)
+  ssdf:
+  - PS.1
+setup:                                   # the SOP's set-up steps, in order (WP5b: SOPs are rendered from this file)
+- In the default branch's ruleset or protection rule (see history-protection), turn on Require a pull request before merging.
+- Set Required approvals to at least 1, and turn on Require review from Code Owners.
+- Turn on Require status checks to pass, and pick the checks that must pass.

@@ -1,0 +1,54 @@
+# PROVISIONAL until the maintainers approve the policies (WP0, maintainer approval 2). WP2 D-2.
+id: security-policy
+scope: repository                               # what the policy governs: a repository, or the org's administration
+name: Vulnerability reporting
+meaning: Tools from version 1.0, and the registry, publish a security policy that says how to report a vulnerability and who
+  responds, and turn on GitHub's private vulnerability reporting.
+applies_if:
+  all:
+  - attr: type
+    in:
+    - tool
+    - governance
+  - attr: stage
+    in:
+    - incubating
+    - graduated
+github:
+  mechanism: SECURITY.md security policy and private vulnerability reporting
+  docs:
+  - https://docs.github.com/en/code-security/getting-started/adding-a-security-policy-to-your-repository
+  - https://docs.github.com/en/rest/repos/repos
+  available_on:
+  - free
+  - team
+  - enterprise
+checks:
+  automated:
+  - id: security-policy-present
+    reads: GraphQL repository { isSecurityPolicyEnabled } == true
+    permission: 'Metadata: read'
+  - id: private-reporting-on
+    reads: GET /repos/{owner}/{repo}/private-vulnerability-reporting -> enabled == true
+    permission: 'Metadata: read'
+  attested:
+  - id: disclosure-followed
+    statement: Reports are answered following the published process, which also says what to expect for automated or AI-assisted
+      reports.
+cites:
+  cisa:
+  - CISA-P-SECURITY-MD
+  - CISA-P-VDP-BOD
+  - CISA-P-VDP-AI-REPORTS
+  - CISA-P-SECURITY-CONTACT
+  nist:
+  - RA-5(11)
+  openssf:
+  - OI-3
+  dodcio:
+  - 2.C(4)
+setup:                                   # the SOP's set-up steps, in order (WP5b: SOPs are rendered from this file)
+- Add `SECURITY.md` (at the root, in `.github/` or in `docs/`) saying how to report a vulnerability and who responds.
+- Go to Settings, then Advanced Security, and turn on Private vulnerability reporting.
+- Say in the policy what reporters can expect, including for automated or AI-assisted reports.
+- Record the attestation below.
