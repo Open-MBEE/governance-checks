@@ -3,7 +3,7 @@
 Changes land through pull requests against `develop`; `main` holds what the scheduled run uses. Keep a change to one
 of: a new or corrected check (its requirement def in `model/governance.sysml`, a sensor in `sense.py` producing the facts it reads, and a unit test against a fake response; regenerate `model/repositories.sysml` with `python3 model.py --registry <checkout>` after a `repos.yaml` change), a
 `repos.yaml` entry or attestation (with a link to the evidence), a `registry.ref` bump (with the fixtures refreshed and
-the baseline re-recorded), or a baseline update after a repository's state changed.
+the baseline re-recorded), or a baseline update after a repository's state changed. A change to the model's structure or to the pipeline itself is a maintainer's call: agree it first, then open it as its own PR.
 
 Before opening a PR run `python3 -m pytest -q` (with `OPENSYSML_SYSML` pointing at a `sysml` binary so the evaluation test runs), `python3 model.py --registry <checkout> --check`, and, with `GH_TOKEN` set, `python3 check.py --registry <checkout>`
 for the repositories your change touches. Do not add a check the registry does not define; propose it in repo-registry

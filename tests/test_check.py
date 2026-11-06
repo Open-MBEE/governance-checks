@@ -238,7 +238,6 @@ def test_opensysml_decides_the_verdicts(tmp_path):
     reg = registry()
     entries = [{"name": "o/r", "type": "tool", "stage": "graduated", "attest": {"design-current": "x"}}]
     (tmp_path / "m").mkdir()
-    shutil.copy(model.MODEL, tmp_path / "m" / "governance.sysml")
     model.generate(reg, {"repos": entries}, tmp_path / "m")
     records = [{"element": model.element("o/r"), "approvalsRequired": 1, "codeOwnerReviewRequired": True, "readmePresent": False,
                 "license": "GPL-3.0"}]
