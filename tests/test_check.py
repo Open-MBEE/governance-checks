@@ -187,8 +187,9 @@ def test_every_registry_check_is_a_requirement_with_the_policy_s_assumption():
     declared = set(re.findall(r"^\s*requirement def (\w+)", MODEL_TEXT, re.M))
     assert declared == {n.rsplit("::", 1)[1] for n in expected}, "requirement defs without a registry check"
     lic = requirement_block("license-by-type", "license-allowed")
-    for type_, licenses in reg.allowed_licenses.items():
-        assert f"repo.type == Type::{type_}" in lic and all(f'"{l}"' in lic for l in licenses), type_
+    stated = {t: set(re.findall(r'repo\.license == "([^"]+)"', body))
+              for t, body in re.findall(r"\(repo\.type == Type::(\w+) and \((.*?)\)\)", lic)}
+    assert stated == {t: set(ls) for t, ls in reg.allowed_licenses.items()}, "license lists differ from the registry"
 
 
 def test_repositories_follow_repos_yaml():

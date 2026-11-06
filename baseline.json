@@ -831,7 +831,7 @@
       },
       {
         "check": "default-token-read",
-        "status": "fail"
+        "status": "pass"
       },
       {
         "check": "workflows-hardened",
