@@ -11,30 +11,24 @@ engine, this repository retires.
 
 ## How it works
 
-The verdicts are decided in SysML v2, by OpenSysML, not in Python:
+The model is the source and OpenSysML decides:
 
-1. [`model.py`](model.py) generates the governance model from the pinned repo-registry data into
-   [`model/governance.sysml`](model/governance.sysml): the kinds (`Type`, `Stage`, `Tier`), a `Repository` with
-   one attribute per fact the policies read, and one `requirement def` per automated or attested check, grouped in
-   a package per policy, whose assumption is the policy's `applies_if` and whose required constraint is the
-   check's predicate. [`model/repositories.sysml`](model/repositories.sysml) holds one part per entry of
-   `repos.yaml`, bound to its kind and attestations, and one `satisfy` assertion per check in effect for it.
-   Both files are committed so the model can be read, and CI fails when they are stale (`model.py --check`).
-2. [`sense.py`](sense.py) observes the facts, one sensor per check, through `gh api` — a count, a flag, a string,
+1. [`model/governance.sysml`](model/governance.sysml) is hand-written: the kinds (`Type`, `Stage`, and `Tier`
+   derived by the `TierOf` calc, the registry's kinds table), a `Repository` with one attribute per fact the policies
+   read, and one `requirement def` per registry check in a package per policy (`Policies::ChangeReview::ReviewRequired`
+   for `change-review`/`review-required`), whose assumption is the policy's `applies_if` and whose required constraint
+   is how the check is decided. A policy change means editing this file; the unit tests fail when it disagrees with
+   the pinned registry (a check without a requirement or the reverse, an assumption that is not the policy's
+   `applies_if`, a tier that is not the kinds table's, a license list that differs).
+2. [`model.py`](model.py) derives [`model/repositories.sysml`](model/repositories.sysml) from `repos.yaml`: one part
+   per entry bound to its type, stage and attestations, and one `satisfy` assertion per check in effect; CI fails when
+   the committed file is stale (`model.py --check`). It also reads the model back through `sysml -convert api-json`,
+   so the facts a sensor may produce are the attributes the model declares.
+3. [`sense.py`](sense.py) observes the facts, one sensor per check, through `gh api` — a count, a flag, a string,
    never a verdict — into `build/measurements.json`; a fact the token cannot read is left out.
-3. `sysml … -import build/measurements.json` binds the facts into the model and `sysml -satisfy -json` evaluates
+4. `sysml … -import build/measurements.json` binds the facts into the model and `sysml -satisfy -json` evaluates
    every assertion; [`check.py`](check.py) maps `holds` / `fails` / `unresolved` to the table, adds the sensors'
    detail and compares with `baseline.json`.
-
-Reading a policy therefore means reading its requirement in `model/governance.sysml`, for example:
-
-```sysml
-requirement def ReviewRequired {
-    subject repo : Repository;
-    assume constraint inEffect { repo.tier == Tier::high }
-    require constraint reviewRequired { repo.approvalsRequired >= 1 and repo.codeOwnerReviewRequired }
-}
-```
 
 OpenSysML treats an assumption as a trusted precondition rather than a vacuity condition, so an assertion is only
 generated for a check in effect at the entry's kind; the assumption documents the rule the generator applied.

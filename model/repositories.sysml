@@ -5,7 +5,6 @@ package Repositories {
     part 'Open-MBEE/flexo-change-adapter' : Repository {
         attribute :>> type = Type::tool;
         attribute :>> stage = Stage::graduated;
-        attribute :>> tier = Tier::high;
         attribute :>> attestedContributingContent = true;
         attribute :>> attestedDependencyPolicy = true;
         attribute :>> attestedServicePins = true;
@@ -53,7 +52,6 @@ package Repositories {
     part 'Open-MBEE/OpenSysML' : Repository {
         attribute :>> type = Type::tool;
         attribute :>> stage = Stage::graduated;
-        attribute :>> tier = Tier::high;
         attribute :>> attestedContributingContent = true;
         attribute :>> attestedDependencyPolicy = false;
         attribute :>> attestedServicePins = false;
@@ -101,7 +99,6 @@ package Repositories {
     part 'Open-MBEE/OpenSysML-Extensions-Library' : Repository {
         attribute :>> type = Type::tool;
         attribute :>> stage = Stage::incubating;
-        attribute :>> tier = Tier::medium;
         attribute :>> attestedContributingContent = false;
         attribute :>> attestedDependencyPolicy = false;
         attribute :>> attestedServicePins = false;
@@ -132,7 +129,6 @@ package Repositories {
     part 'Open-MBEE/OpenSysML-REDK-Skills' : Repository {
         attribute :>> type = Type::tool;
         attribute :>> stage = Stage::sandbox;
-        attribute :>> tier = Tier::low;
     }
     satisfy requirement 'Open-MBEE/OpenSysML-REDK-Skills: codeowners-present' : Policies::Codeowners::CodeownersPresent by 'Open-MBEE/OpenSysML-REDK-Skills';
     satisfy requirement 'Open-MBEE/OpenSysML-REDK-Skills: codeowners-valid' : Policies::Codeowners::CodeownersValid by 'Open-MBEE/OpenSysML-REDK-Skills';
@@ -142,7 +138,6 @@ package Repositories {
     part 'Open-MBEE/airflow-provider-opensysml' : Repository {
         attribute :>> type = Type::tool;
         attribute :>> stage = Stage::sandbox;
-        attribute :>> tier = Tier::low;
     }
     satisfy requirement 'Open-MBEE/airflow-provider-opensysml: codeowners-present' : Policies::Codeowners::CodeownersPresent by 'Open-MBEE/airflow-provider-opensysml';
     satisfy requirement 'Open-MBEE/airflow-provider-opensysml: codeowners-valid' : Policies::Codeowners::CodeownersValid by 'Open-MBEE/airflow-provider-opensysml';
@@ -152,7 +147,6 @@ package Repositories {
     part 'Open-MBEE/sysml-toolkit' : Repository {
         attribute :>> type = Type::tool;
         attribute :>> stage = Stage::sandbox;
-        attribute :>> tier = Tier::low;
     }
     satisfy requirement 'Open-MBEE/sysml-toolkit: codeowners-present' : Policies::Codeowners::CodeownersPresent by 'Open-MBEE/sysml-toolkit';
     satisfy requirement 'Open-MBEE/sysml-toolkit: codeowners-valid' : Policies::Codeowners::CodeownersValid by 'Open-MBEE/sysml-toolkit';
@@ -162,7 +156,6 @@ package Repositories {
     part 'Open-MBEE/OpenSysML-FAQ' : Repository {
         attribute :>> type = Type::media;
         attribute :>> stage = Stage::incubating;
-        attribute :>> tier = Tier::medium;
         attribute :>> attestedContributingContent = false;
     }
     satisfy requirement 'Open-MBEE/OpenSysML-FAQ: codeowners-present' : Policies::Codeowners::CodeownersPresent by 'Open-MBEE/OpenSysML-FAQ';
@@ -175,7 +168,6 @@ package Repositories {
     part 'Open-MBEE/opensysml.github.io' : Repository {
         attribute :>> type = Type::media;
         attribute :>> stage = Stage::incubating;
-        attribute :>> tier = Tier::medium;
         attribute :>> attestedContributingContent = false;
     }
     satisfy requirement 'Open-MBEE/opensysml.github.io: codeowners-present' : Policies::Codeowners::CodeownersPresent by 'Open-MBEE/opensysml.github.io';
@@ -188,7 +180,6 @@ package Repositories {
     part 'Open-MBEE/governance-checks' : Repository {
         attribute :>> type = Type::tool;
         attribute :>> stage = Stage::incubating;
-        attribute :>> tier = Tier::medium;
         attribute :>> attestedContributingContent = false;
         attribute :>> attestedDependencyPolicy = false;
         attribute :>> attestedServicePins = false;

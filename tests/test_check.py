@@ -3,6 +3,7 @@ import base64
 import datetime as dt
 import json
 import os
+import re
 import pathlib
 import shutil
 import subprocess
@@ -157,42 +158,79 @@ def test_code_scanning_and_alert_ages():
     assert repo({"repos/o/r/dependabot/alerts": dep}).sense_dependency_alerts_on_time().facts == {"dependabotAlertsOverdue": 1}
 
 
-# ------------------------------------------------------------------------------------------------------------ model
+# ---------------------------------------------------------------------------------- the model against the registry
 
-def test_every_automated_check_has_a_sensor_and_a_predicate():
+MODEL_TEXT = model.MODEL.read_text()
+
+
+def requirement_block(policy_id, check_id):
+    m = re.search(rf"package {model.pascal(policy_id)} \{{.*?requirement def {model.pascal(check_id)} \{{(.*?)\n            \}}", MODEL_TEXT, re.S)
+    return m.group(1) if m else None
+
+
+def test_every_registry_check_is_a_requirement_with_the_policy_s_assumption():
     reg = registry()
     r = repo({})
+    expected = set()
     for p in model.repo_policies(reg):
-        for c in p["checks"].get("automated") or []:
-            assert r.sensor(c["id"]) is not None, c["id"]
-            assert c["id"] == "license-allowed" or c["id"] in model.PREDICATES, c["id"]
-    names = {f[0] for f in model.FACTS}
-    for pred in model.PREDICATES.values():
-        for fact in {w[5:] for w in pred.replace("(", " ").split() if w.startswith("repo.")}:
-            assert fact in names, fact
+        for kind in ("automated", "attested"):
+            for c in p["checks"].get(kind) or []:
+                expected.add(model.requirement_name(p["id"], c["id"]))
+                block = requirement_block(p["id"], c["id"])
+                assert block, f"no requirement def for {p['id']}/{c['id']}"
+                assume = re.search(r"assume constraint inEffect \{ (.*?) \}", block).group(1)
+                assert " ".join(assume.split()) == model.applies_expr(model.check_rule(p, c)), f"{c['id']} assumption"
+                if kind == "automated":
+                    assert r.sensor(c["id"]) is not None, c["id"]
+                else:
+                    assert f"repo.{model.attested_fact(c['id'])}" in block
+    declared = set(re.findall(r"requirement def (\w+)", MODEL_TEXT))
+    assert declared == {n.rsplit("::", 1)[1] for n in expected}, "requirement defs without a registry check"
+    lic = requirement_block("license-by-type", "license-allowed")
+    for type_, licenses in reg.allowed_licenses.items():
+        assert f"repo.type == Type::{type_}" in lic and all(f'"{l}"' in lic for l in licenses), type_
 
 
-def test_applies_and_license_expressions():
-    assert model.applies_expr({"attr": "tier", "eq": "high"}) == "repo.tier == Tier::high"
-    assert model.applies_expr({"all": [{"attr": "type", "eq": "tool"}, {"attr": "stage", "in": ["incubating", "graduated"]}]}) == \
-        "(repo.type == Type::tool) and (repo.stage == Stage::incubating or repo.stage == Stage::graduated)"
-    assert model.applies_expr(None) == "true"
-    assert model.license_expr({"tool": ["Apache-2.0", "MIT"]}) == '(repo.type == Type::tool and (repo.license == "Apache-2.0" or repo.license == "MIT"))'
-
-
-def test_generated_model_shape():
+def test_repositories_follow_repos_yaml():
     reg = registry()
-    gov = model.governance_sysml(reg, "abc")
-    assert "requirement def ReviewRequired" in gov and "assume constraint inEffect { repo.tier == Tier::high }" in gov
-    assert "require constraint reviewRequired { repo.approvalsRequired >= 1 and repo.codeOwnerReviewRequired }" in gov
-    assert "attribute attestedDesignCurrent : Boolean;" in gov
     entries = [{"name": "o/r", "type": "tool", "stage": "sandbox"},
                {"name": "o/g", "type": "tool", "stage": "graduated", "attest": {"design-current": "docs/x.md"}}]
     reps = model.repositories_sysml(reg, entries)
-    assert "satisfy requirement 'o/r: codeowners-present'" in reps and "'o/r: review-required'" not in reps
+    assert "satisfy requirement 'o/r: codeowners-present' : Policies::Codeowners::CodeownersPresent by 'o/r';" in reps
+    assert "'o/r: review-required'" not in reps and "attribute :>> tier" not in reps
     assert "attribute :>> attestedDesignCurrent = true;" in reps and "attribute :>> attestedStableReleasePolicy = false;" in reps
     mid = {c["id"] for _, c, _ in model.in_effect(reg, {"name": "o/m", "type": "tool", "stage": "incubating"})}
     assert "semver-tags" in mid and "stable-release-policy" not in mid
+
+
+@pytest.mark.skipif(not SYSML, reason="no sysml binary (set OPENSYSML_SYSML)")
+def test_model_declares_the_facts_the_sensors_produce_and_the_registry_s_requirements():
+    reg = registry()
+    m = model.Model(SYSML)
+    assert m.requirements == sorted(model.requirement_name(p["id"], c["id"]) for p in model.repo_policies(reg)
+                                    for kind in ("automated", "attested") for c in p["checks"].get(kind) or [])
+    names = set(m.facts)
+    for p in model.repo_policies(reg):
+        for c in p["checks"].get("attested") or []:
+            assert model.attested_fact(c["id"]) in names
+    produced = {"archived", "approvalsRequired", "codeOwnerReviewRequired", "requiredStatusChecks", "codeownersPresent", "codeownersErrors",
+                "contributingPresent", "readmePresent", "dependabotAlertsOn", "forcePushBlocked", "deletionBlocked", "license", "stableRelease",
+                "sbomAttached", "releaseImmutable", "pushProtectionOn", "securityPolicyPresent", "privateReportingOn", "offPatternReleaseTags",
+                "codeScanningConfigured", "codeScanningEnabled", "criticalAlertsOverdue", "mediumPlusAlertsOverdue", "dependabotAlertsOverdue",
+                "codeOwners", "unverifiedCodeOwners", "defaultTokenRead"}
+    assert produced <= names, produced - names
+
+
+@pytest.mark.skipif(not SYSML, reason="no sysml binary (set OPENSYSML_SYSML)")
+def test_tier_calc_matches_the_kinds_table():
+    reg = registry()
+    args = []
+    for type_, stages in reg.kinds.items():
+        for stage in stages:
+            args += ["-e", f"Governance::TierOf(Governance::Type::{type_}, Governance::Stage::{stage})"]
+    out = subprocess.run([SYSML, *args, str(model.MODEL)], capture_output=True, text=True).stdout
+    got = re.findall(r"= \[?Tier::(\w+)\]?", out)
+    assert got == [reg.kinds[t][s]["tier"] for t in reg.kinds for s in reg.kinds[t]]
 
 
 @pytest.mark.skipif(not SYSML, reason="no sysml binary (set OPENSYSML_SYSML)")
@@ -200,7 +238,8 @@ def test_opensysml_decides_the_verdicts(tmp_path):
     reg = registry()
     entries = [{"name": "o/r", "type": "tool", "stage": "graduated", "attest": {"design-current": "x"}}]
     (tmp_path / "m").mkdir()
-    model.generate(reg, {"registry": {"ref": "t"}, "repos": entries}, tmp_path / "m")
+    shutil.copy(model.MODEL, tmp_path / "m" / "governance.sysml")
+    model.generate(reg, {"repos": entries}, tmp_path / "m")
     records = [{"element": model.element("o/r"), "approvalsRequired": 1, "codeOwnerReviewRequired": True, "readmePresent": False,
                 "license": "GPL-3.0"}]
     verdicts = check.evaluate(SYSML, tmp_path / "m", tmp_path / "b", records)

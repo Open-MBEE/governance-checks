@@ -59,7 +59,7 @@ jobs:
           grep ' sysml-linux-amd64.tar.gz$' SHA256SUMS.txt | sha256sum -c -
           tar xzf sysml-linux-amd64.tar.gz && install -m 755 sysml-linux-amd64 /usr/local/bin/sysml
           sysml -version | head -1
-      - name: The committed model matches the registry pin
+      - name: The committed repositories.sysml matches repos.yaml
         run: python3 model.py --registry registry --check
       - name: Measure
         env:
