@@ -1,0 +1,30 @@
+# PROVISIONAL until the maintainers approve the policies (WP0, maintainer approval 2). WP2 D-2.
+id: project-files
+scope: repository                               # what the policy governs: a repository, or the org's administration
+name: README
+meaning: Every live repository has a README that says what it is and how to use it. (Its license is covered by license-by-type.)
+applies_if:
+  not:
+    attr: stage
+    eq: archived
+github:
+  mechanism: A README file, detected by GitHub's community profile
+  docs:
+  - https://docs.github.com/en/rest/metrics/community
+  available_on:
+  - free
+  - team
+  - enterprise
+checks:
+  automated:
+  - id: readme-present
+    reads: GET /repos/{owner}/{repo}/community/profile -> files.readme is not null
+    permission: 'Contents: read'
+  attested: []
+cites:
+  cisa:
+  - CISA-P-README
+  nist: none
+  openssf: []
+setup:                                   # the SOP's set-up steps, in order (WP5b: SOPs are rendered from this file)
+- Add a `README.md` at the root that says what the project is and how to use it.

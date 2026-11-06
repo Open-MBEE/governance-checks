@@ -1,0 +1,50 @@
+# PROVISIONAL until the maintainers approve the policies (WP0, maintainer approval 2). WP2 D-2.
+id: workflow-least-privilege
+scope: repository                               # what the policy governs: a repository, or the org's administration
+name: Least-privilege automation
+meaning: Tools from version 1.0, and the registry, give their GitHub Actions workflows read-only access by default, and set
+  up workflows following GitHub's hardening guidance.
+applies_if:
+  all:
+  - attr: type
+    in:
+    - tool
+    - governance
+  - attr: stage
+    in:
+    - incubating
+    - graduated
+github:
+  mechanism: Actions default workflow permissions set to read
+  docs:
+  - https://docs.github.com/en/rest/actions/permissions
+  - https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions
+  available_on:
+  - free
+  - team
+  - enterprise
+checks:
+  automated:
+  - id: default-token-read
+    reads: GET /repos/{owner}/{repo}/actions/permissions/workflow -> default_workflow_permissions == read
+    permission: 'Administration: read'
+  attested:
+  - id: workflows-hardened
+    statement: 'Workflows follow GitHub''s security hardening guide for Actions: text that outside contributors control (such
+      as pull request titles) is never run as a command, code from outside contributors'' pull requests is never run with
+      write access or secrets, and each job asks only for the permissions it needs.'
+cites:
+  cisa:
+  - CISA-P-SSDF
+  nist:
+  - AC-6
+  openssf:
+  - TI-3
+  - OI-1
+  ssdf:
+  - PS.1
+setup:                                   # the SOP's set-up steps, in order (WP5b: SOPs are rendered from this file)
+- Go to Settings, then Actions, then General.
+- Under Workflow permissions, choose Read repository contents and packages permissions.
+- In each workflow, give each job only the permissions it needs, using the `permissions:` key.
+- Follow GitHub's security hardening guide for Actions (https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions), then record the attestation below.

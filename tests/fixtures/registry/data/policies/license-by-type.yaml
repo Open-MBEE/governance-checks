@@ -1,0 +1,68 @@
+# PROVISIONAL until the maintainers approve the policies (WP0, maintainer approval 2). WP2a D-2.
+id: license-by-type
+scope: repository                               # what the policy governs: a repository, or the org's administration
+name: The right license for the content
+meaning: 'Every live repository has a license that OpenMBEE accepts for its type of content: Apache-2.0 or MIT for tools;
+  CC-BY-4.0, Apache-2.0 or MIT for media; Apache-2.0, MIT, CC-BY-4.0 or a CDLA license for research; Apache-2.0 for governance.
+  Any other license needs a recorded exception.'
+applies_if:
+  not:
+    attr: stage
+    eq: archived
+license_guidance:                        # shown in the SOP's table: which license to use, per type (WP5b; was hand-written)
+  tool: {use: "Apache-2.0", also: "MIT"}
+  media: {use: "CC-BY-4.0 for documentation and teaching material", also: "Apache-2.0 or MIT where the media is mostly code, such as the website"}
+  research: {use: "Apache-2.0 or MIT for code; CC-BY-4.0 for writing", also: "CDLA-Permissive-2.0 or CDLA-Sharing-1.0 for data"}
+  governance: {use: "Apache-2.0", also: "—"}
+applies_note: >-                          # shown after the SOP's "Applies to" line (WP5b; was hand-written)
+  Not archived repositories, and not forks, which keep their upstream license. If a repository has only a `reason` in
+  the kind list, it is unclassified, and no license rule applies yet. A license from the table below is still the
+  right choice, and the maintainers will give the repository a kind.
+allowed_licenses:
+  tool:
+  - Apache-2.0
+  - MIT
+  media:
+  - CC-BY-4.0
+  - Apache-2.0
+  - MIT
+  research:
+  - Apache-2.0
+  - MIT
+  - CC-BY-4.0
+  - CDLA-Permissive-2.0
+  - CDLA-Sharing-1.0
+  governance:
+  - Apache-2.0
+github:
+  mechanism: A LICENSE file, detected by GitHub's license detection (SPDX identifier)
+  docs:
+  - https://docs.github.com/en/rest/licenses/licenses
+  - https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/licensing-a-repository
+  available_on:
+  - free
+  - team
+  - enterprise
+checks:
+  automated:
+  - id: license-allowed
+    reads: GET /repos/{owner}/{repo} -> license.spdx_id is in allowed_licenses for the repository's type (missing or NOASSERTION
+      is red; an accepted exception in data/deviations.yaml is green, marked as an exception)
+    permission: 'Metadata: read'
+  attested: []
+cites:
+  cisa:
+  - CISA-P-LICENSE-FILE
+  - CISA-P-LICENSE-PERMISSIVE
+  nist: none
+  openssf: []
+secondary_notes: 'OpenSSF''s charter, via its project lifecycle (ossf/tac d019efe): code Apache-2.0 or MIT, data a Community
+  Data License Agreement, specifications the Community Specification License 1.0, documentation CC-BY-4.0. NumFOCUS, OpenMBEE''s
+  fiscal sponsor, expects a standard open source (OSI-approved) license, and counts mixed or missing licenses against a project.'
+setup:                                   # the SOP's set-up steps, in order (WP5b: SOPs are rendered from this file)
+- Look up your repository's `type` in [registry.yaml](https://github.com/Open-MBEE/repo-registry/blob/main/registry.yaml), and pick the license from the table above.
+- 'Add it as a single `LICENSE` file at the root. On GitHub: Add file, then Create new file, name it `LICENSE`, and choose the license template GitHub offers. CC-BY-4.0 and the CDLA licenses aren''t in GitHub''s template list, so paste their official text instead (creativecommons.org, cdla.dev).'
+- 'Check that GitHub detects it: the repository''s main page shows the license name in the About box.'
+- 'If the repository holds both code and writing (for example a tool with a documentation folder), put the license for its main content in the root `LICENSE` file, because that is the one GitHub detects and the registry checks. License the rest in its own folder (for example `docs/LICENSE` with CC-BY-4.0), and say so in the README. Don''t put two license files at the root: GitHub then can''t recognize the license, and the check shows red.'
+- If you need a different license (for example because you depend on code under another license), ask the maintainers for an exception. It is recorded in `data/deviations.yaml` with the reason, by a pull request that an owner merges (WP4b OD3). The check then shows green, marked as an exception.
+- Changing a license that contributors have already used can need their agreement. If in doubt, get legal advice, as CISA recommends.

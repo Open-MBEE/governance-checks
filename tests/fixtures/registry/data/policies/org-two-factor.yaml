@@ -1,0 +1,37 @@
+# PROVISIONAL until the maintainers approve the policies (WP0, maintainer approval 2). WP3 D-2.
+id: org-two-factor
+scope: org                               # what the policy governs: a repository, or the org's administration
+name: Two-factor authentication for everyone
+meaning: The organization requires two-factor authentication for every member and outside collaborator.
+applies_if:
+  all:
+  - attr: type
+    eq: governance
+  - attr: stage
+    eq: graduated
+github:
+  mechanism: 'Organization setting: require two-factor authentication'
+  docs:
+  - https://docs.github.com/en/organizations/keeping-your-organization-secure/managing-two-factor-authentication-for-your-organization/requiring-two-factor-authentication-in-your-organization
+  - https://docs.github.com/en/rest/orgs/orgs
+  available_on:
+  - free
+  - team
+  - enterprise
+checks:
+  automated:
+  - id: two-factor-required
+    reads: 'GET /orgs/{org} -> two_factor_requirement_enabled == true (returned only to owners: yellow otherwise)'
+    permission: 'organization owner (Administration: read)'
+  attested: []
+cites:
+  cisa: none
+  nist:
+  - IA-2(1)
+  openssf:
+  - SB-2
+setup:                                   # the SOP's set-up steps, in order (WP5b: SOPs are rendered from this file)
+- An organization owner opens the organization's Settings, then Authentication security.
+- Turn on Require two-factor authentication for everyone in the organization, after steps 3 and 4.
+- 'Before turning it on, find who hasn''t set it up yet: on the organization''s People page (and the Outside collaborators page), filter by "2FA" to list those without two-factor authentication. Owners can see this list.'
+- 'Ask each of them to turn it on (on GitHub: their profile picture, then Settings, then Password and authentication), and give them a date. When the requirement starts, GitHub removes outside collaborators who still haven''t, and members without it lose access until they set it up.'

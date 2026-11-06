@@ -1,0 +1,49 @@
+# PROVISIONAL until the maintainers approve the policies (WP0, maintainer approval 2). WP2 D-2.
+id: history-protection
+scope: repository                               # what the policy governs: a repository, or the org's administration
+name: Keep the history
+meaning: Tools from version 1.0, and the registry, protect the default branch from force pushes and deletion, so that its
+  history stays complete for review and audit.
+applies_if:
+  all:
+  - attr: type
+    in:
+    - tool
+    - governance
+  - attr: stage
+    in:
+    - incubating
+    - graduated
+github:
+  mechanism: A ruleset (preferred) or a branch protection rule that blocks force pushes and deletion on the default branch
+  docs:
+  - https://docs.github.com/en/rest/repos/rules
+  - https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets
+  available_on:
+  - free
+  - team
+  - enterprise
+checks:
+  automated:
+  - id: no-force-push
+    reads: GET /repos/{owner}/{repo}/branches/{default_branch}/protection -> allow_force_pushes.enabled == false, or GET .../rules/branches/{default_branch}
+      includes non_fast_forward
+    permission: 'Administration: read (classic protection); Metadata: read (rulesets)'
+  - id: no-deletion
+    reads: GET /repos/{owner}/{repo}/branches/{default_branch}/protection -> allow_deletions.enabled == false, or GET .../rules/branches/{default_branch}
+      includes deletion
+    permission: 'Administration: read (classic protection); Metadata: read (rulesets)'
+  attested: []
+cites:
+  cisa:
+  - CISA-P-NO-SQUASH
+  - CISA-P-HISTORY-ASSET
+  nist:
+  - CM-3
+  openssf: []
+  ssdf:
+  - PS.1
+setup:                                   # the SOP's set-up steps, in order (WP5b: SOPs are rendered from this file)
+- Go to Settings, then Rules, then Rulesets, and create a branch ruleset for the default branch, with enforcement Active. (An existing branch protection rule under Settings, then Branches, that does the same job also passes.)
+- 'Turn on Block force pushes and Restrict deletions (in a branch protection rule: leave Allow force pushes and Allow deletions off), and save.'
+- 'That is all this policy asks. Squash-merging pull requests is fine: what it prevents is rewriting or deleting the default branch''s published history.'

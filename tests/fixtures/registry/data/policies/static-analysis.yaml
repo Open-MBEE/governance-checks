@@ -1,0 +1,49 @@
+# PROVISIONAL until the maintainers approve the policies (WP0, maintainer approval 2). WP2 D-2.
+id: static-analysis
+scope: repository                               # what the policy governs: a repository, or the org's administration
+name: Code scanning
+meaning: Tools from version 1.0, and the registry, run code scanning on every change and fix critical findings promptly.
+applies_if:
+  all:
+  - attr: type
+    in:
+    - tool
+    - governance
+  - attr: stage
+    in:
+    - incubating
+    - graduated
+github:
+  mechanism: Code scanning (CodeQL default or advanced setup)
+  docs:
+  - https://docs.github.com/en/rest/code-scanning/code-scanning
+  - https://docs.github.com/en/code-security/code-scanning/introduction-to-code-scanning/about-code-scanning
+  available_on:
+  - free
+  - team
+  - enterprise
+checks:
+  automated:
+  - id: code-scanning-configured
+    reads: GET /repos/{owner}/{repo}/code-scanning/default-setup -> state == configured, or GET .../code-scanning/analyses
+      is not empty
+    permission: 'Administration: read; Code scanning alerts: read'
+  - id: no-open-critical
+    reads: GET /repos/{owner}/{repo}/code-scanning/alerts?state=open -> none with security_severity_level == critical older
+      than 14 days
+    permission: 'Code scanning alerts: read'
+  attested: []
+cites:
+  cisa:
+  - CISA-P-MAINT-SCANS
+  - CISA-P-SECURITY-REVIEW
+  nist:
+  - SA-11(1)
+  openssf:
+  - OI-2
+  dodcio:
+  - 2.C(4)
+setup:                                   # the SOP's set-up steps, in order (WP5b: SOPs are rendered from this file)
+- Go to Settings, then Advanced Security, and set up Code scanning with the CodeQL default setup (or your own workflow).
+- Make sure it runs on pull requests and on the default branch.
+- Fix critical findings within 14 days.

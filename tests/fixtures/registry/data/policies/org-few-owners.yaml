@@ -1,0 +1,38 @@
+# PROVISIONAL until the maintainers approve the policies (WP0, maintainer approval 2). WP3 D-2.
+id: org-few-owners
+scope: org                               # what the policy governs: a repository, or the org's administration
+name: Few owners
+meaning: The organization has two or three owners, no more. Owners can do anything to every repository and to the organization
+  itself, so the role is kept small.
+applies_if:
+  all:
+  - attr: type
+    eq: governance
+  - attr: stage
+    eq: graduated
+github:
+  mechanism: Organization owner role
+  docs:
+  - https://docs.github.com/en/organizations/managing-peoples-access-to-your-organization-with-roles/roles-in-an-organization
+  - https://docs.github.com/en/rest/orgs/members
+  available_on:
+  - free
+  - team
+  - enterprise
+checks:
+  automated:
+  - id: owner-count
+    reads: GET /orgs/{org}/members?role=admin -> between 2 and 3 members
+    permission: 'organization member (Members: read)'
+  attested: []
+cites:
+  cisa: none
+  nist:
+  - AC-6(5)
+  openssf:
+  - TI-3
+setup:                                   # the SOP's set-up steps, in order (WP5b: SOPs are rendered from this file)
+- 'List the owners: organization People page, filtered by role Owner.'
+- Decide, under the maintainer policy, which two or three people keep the owner role.
+- Give everyone else the power they actually need instead, for example admin on specific repositories through a team, or the security manager role (a GitHub organization role that can manage security settings and alerts on every repository without owning the organization; see https://docs.github.com/en/organizations/managing-peoples-access-to-your-organization-with-roles/managing-security-managers-in-your-organization).
+- An owner changes the others' role to Member.

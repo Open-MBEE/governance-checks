@@ -1,0 +1,58 @@
+# PROVISIONAL until the maintainers approve the policies (WP0, maintainer approval 2). WP2 D-1.
+# Every OpenSSF security-baseline item (WP2 R-13) and every CISA practice (WP2 R-6) is either carried by a policy
+# (cited in its `cites`) or listed here with the reason it is left out. scripts/policies.py checks both.
+
+openssf:
+  SB-1: >-
+    A language is a design choice for each tool, not a repository setting that GitHub can carry. Most OpenMBEE code is
+    already in memory-safe languages (Java, Kotlin, Python, TypeScript, Go, Rust). Revisit if new C or C++ components
+    appear.
+  TI-1: >-
+    Scorecard is OpenSSF's measuring tool. The registry measures the controls we adopted directly, and anyone can run
+    Scorecard against a public repository without the repository adding a workflow. Requiring the Scorecard Action on
+    every repository would add a workflow with extra write permissions and duplicate this registry's job.
+  TI-4: >-
+    A SECURITY_INSIGHTS.yml file in each repository would duplicate the record this registry already keeps, and add
+    overhead to every repository. Revisit if adopters ask for it in that format.
+  OI-4: >-
+    It is about services the foundation runs. OpenMBEE repositories hold software that others deploy, and encryption
+    in transit is a property of a deployment, not of a repository setting.
+  TG-9: >-
+    It is for internet or infrastructure services run on behalf of the foundation. OpenMBEE repositories don't run
+    such services, so there is nothing in a repository to log.
+  TG-10: >-
+    It is for internet or infrastructure services run on behalf of the foundation. OpenMBEE repositories don't run
+    such services, so there is nothing in a repository to monitor.
+  TG-11: >-
+    It is a foundation-funded audit of services the foundation runs. OpenMBEE has no such services or funding
+    process. A tool's security design is covered by the security-design policy.
+  OG-2: >-
+    It follows from TG-11, which is left out for the same reason.
+
+cisa:
+  CISA-P-DEFAULT-OPEN: Federal agency policy on deciding to publish code. OpenMBEE repositories are open by default.
+  CISA-P-OPEN-PRACTICES: A development habit (work in the open from the start), not a repository control.
+  CISA-P-INVENTORY: A federal source-code inventory. This registry plays that role for OpenMBEE (a code.json export is an R5 candidate).
+  CISA-P-USAGE-TYPE: Federal usage types (open source, reuse, exemptions). Every OpenMBEE repository is open source.
+  CISA-P-USAGE-REVIEWS: Federal reviews per usage type. They don't apply to an open source foundation.
+  CISA-P-METADATA: Federal inventory metadata. The registry's own data serves this purpose.
+  CISA-P-METADATA-FILE: The federal code.json file. An export in that shape is an R5 candidate, not a repository control.
+  CISA-P-METADATA-FIELDS: Fields of the federal metadata schema. As for CISA-P-METADATA-FILE.
+  CISA-P-PUBLIC-HOST: OpenMBEE already publishes on GitHub.
+  CISA-P-STAFF-ACCOUNTS: Federal staff account naming. It doesn't apply to an open community.
+  CISA-P-LIFECYCLE-RESOURCES: Planning resources for a project's life is a governance matter for the maintainers, not a repository control. The lifecycle stages make it visible.
+  CISA-P-CONTRACT-RIGHTS: Federal contracting terms.
+  CISA-P-DEV-GUIDES: A pointer to other guides. Their content enters through the OpenSSF baseline (the backbone).
+  CISA-C-UPSTREAM: About contributing to other projects. It isn't a control on OpenMBEE's own repositories.
+  CISA-C-INTERNAL-REVIEW: An agency's review of its staff's outside contributions. Not a repository control.
+  CISA-C-LEGAL: An agency's legal review before contributing elsewhere. Not a repository control.
+  CISA-C-PRIVACY: An agency's privacy review before contributing elsewhere. Secrets in OpenMBEE repositories are covered by secret-protection.
+  CISA-C-INCENTIVES: An agency's incentives for staff contributions. Not a repository control.
+  CISA-C4-CODEBASE: How consumers judge a codebase. It is served indirectly, by dependency-management and vulnerability-remediation, rather than being a control itself.
+  CISA-C4-HOLISTIC: Guidance on how consumers weigh criteria. Not a control.
+  CISA-C4-REEVAL: How often consumers re-evaluate. The registry's scheduled runs serve this, from R2.
+  CISA-C4-S1-CRITERIA: A consumer's evaluation step. The registry is meant to make our repositories easy to evaluate, and its checks are measurable, as this step asks.
+  CISA-C4-S2-TOLERANCE: A consumer's evaluation step. Not a producer control.
+  CISA-C4-S3-OBSERVE: A consumer's evaluation step. Not a producer control.
+  CISA-C4-S4-EVALUATE: A consumer's evaluation step. Not a producer control.
+  CISA-C4-S5-COMPARE: A consumer's evaluation step. Not a producer control.

@@ -1,0 +1,43 @@
+# PROVISIONAL until the maintainers approve the policies (WP0, maintainer approval 2). WP3 D-2.
+id: maintainers-match
+scope: org                               # what the policy governs: a repository, or the org's administration
+name: Named maintainers match governance power
+meaning: The named maintainers (data/maintainers.yaml) are exactly this repository's code owners, and every owner of the organization
+  is a named maintainer. Owners are a small subset of the maintainers.
+applies_if:
+  all:
+  - attr: type
+    eq: governance
+  - attr: stage
+    eq: graduated
+github:
+  mechanism: Organization owner role and this repository's CODEOWNERS
+  docs:
+  - https://docs.github.com/en/rest/orgs/members
+  - https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+  available_on:
+  - free
+  - team
+  - enterprise
+checks:
+  automated:
+  - id: match
+    reads: GET /orgs/{org}/members?role=admin and GET /orgs/{org}/public_members, compared by scripts/org.py with data/maintainers.yaml
+      and this repository's CODEOWNERS (rows for people whose membership isn't public are yellow)
+    permission: 'organization member (Members: read)'
+  attested:
+  - id: other-powers-declared
+    statement: Anyone else who holds admin power over the organization or its repositories outside GitHub's owner role (for
+      example through installed apps or other platforms) is declared under `other_powers` in data/maintainers.yaml, by a pull
+      request that an owner merges. The merge is the record.
+cites:
+  cisa:
+  - CISA-C4-COMMUNITY
+  nist:
+  - AC-6(1)
+  openssf: []
+setup:                                   # the SOP's set-up steps, in order (WP5b: SOPs are rendered from this file)
+- Keep data/maintainers.yaml up to date through pull requests to this repository, which an owner merges.
+- Make this repository's CODEOWNERS list the same people.
+- Make sure every owner of the organization is a named maintainer. Owners are only two or three of them (see org-few-owners).
+- Declare any other admin powers under `other_powers` in data/maintainers.yaml, by a pull request that an owner merges (see below).

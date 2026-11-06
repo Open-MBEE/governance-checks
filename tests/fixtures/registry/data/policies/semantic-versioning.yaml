@@ -1,0 +1,45 @@
+# PROVISIONAL until the maintainers approve the policies (WP0, maintainer approval 2). WP2 D-2.
+id: semantic-versioning
+scope: repository                               # what the policy governs: a repository, or the org's administration
+name: Version numbers that mean something
+meaning: Tools from version 1.0 number their releases with semantic versioning, so that the version says whether an update
+  is a fix, a feature or a breaking change. Graduated tools also say which releases get fixes, and for how long.
+applies_if:
+  all:
+  - attr: type
+    eq: tool
+  - attr: stage
+    in:
+    - incubating
+    - graduated
+github:
+  mechanism: Release tags
+  docs:
+  - https://docs.github.com/en/rest/releases/releases
+  available_on:
+  - free
+  - team
+  - enterprise
+checks:
+  automated:
+  - id: semver-tags
+    reads: GET /repos/{owner}/{repo}/releases -> every non-draft release tag in the last 12 months matches vMAJOR.MINOR.PATCH
+      (semver.org)
+    permission: 'Contents: read'
+  attested:
+  - id: stable-release-policy
+    statement: 'For graduated tools: a published policy says which releases are supported, and how fixes are backported (copied
+      into those older supported releases).'
+cites:
+  cisa:
+  - CISA-P-RELEASE-MARK
+  nist:
+  - SA-10
+  openssf: []
+  iso12207:
+  - 6.3.5
+secondary_notes: OpenSSF asks Incubating projects to follow a version schema and Graduated projects to adhere to semantic
+  versioning with a stable-release policy (project lifecycle).
+setup:                                   # the SOP's set-up steps, in order (WP5b: SOPs are rendered from this file)
+- 'Tag each release as `vMAJOR.MINOR.PATCH` (semver.org): raise PATCH for fixes, MINOR for new features, and MAJOR for breaking changes.'
+- For graduated tools, publish a short policy saying which releases are supported and how fixes are backported (copied into those older supported releases), then record the attestation below.

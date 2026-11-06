@@ -1,0 +1,55 @@
+# PROVISIONAL until the maintainers approve the policies (WP0, maintainer approval 2). WP2 D-2.
+id: contributing
+scope: repository                               # what the policy governs: a repository, or the org's administration
+name: Contribution guide
+meaning: Tools from version 1.0, media in use, and the registry itself publish a contribution guide that keeps demands on
+  contributors small, says what kinds of contribution are welcome, says how contributions are reviewed and tested before
+  they are merged, and asks for tests with code.
+applies_if:
+  all:
+  - attr: type
+    in:
+    - tool
+    - media
+    - governance
+  - attr: stage
+    in:
+    - incubating
+    - graduated
+github:
+  mechanism: CONTRIBUTING file, detected by GitHub's community profile
+  docs:
+  - https://docs.github.com/en/rest/metrics/community
+  - https://docs.github.com/en/communities/setting-up-your-project-for-healthy-contributions/setting-guidelines-for-repository-contributors
+  available_on:
+  - free
+  - team
+  - enterprise
+checks:
+  automated:
+  - id: contributing-present
+    reads: GET /repos/{owner}/{repo}/community/profile -> files.contributing is not null
+    permission: 'Contents: read'
+  attested:
+  - id: contributing-content
+    statement: The contribution guide keeps requirements on contributors minimal, says which kinds of contribution are accepted,
+      says how contributions are reviewed and tested before they are merged, and (for code) asks for tests with each change.
+cites:
+  cisa:
+  - CISA-P-CONTRIBUTING
+  - CISA-P-CONTRIB-MINIMAL
+  - CISA-P-CONTRIB-TYPES
+  - CISA-P-CONTRIB-TESTS
+  nist:
+  - SA-11
+  openssf: []
+  dodcio:
+  - 3.H
+secondary_notes: OpenSSF requires a contributor guide to enter Incubating (project lifecycle).
+setup:                                   # the SOP's set-up steps, in order (WP5b: SOPs are rendered from this file)
+- Add `CONTRIBUTING.md` at the root (or in `.github/`).
+- Say what kinds of contribution you welcome (for example bug reports, documentation, code).
+- Keep the demands on contributors small. If you accept code, ask for tests with each change.
+- Say how contributions are reviewed and tested before they are merged, for example who reviews them and which checks
+  must pass.
+- Record the attestation below.
