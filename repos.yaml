@@ -3,6 +3,8 @@
 # so a repository can be measured at the tier it is heading for before the registry moves it there.
 #
 # attest: one entry per attested check (the policy's checks.attested[].id), pointing at the evidence.
+opensysml: v0.12.1   # the OpenSysML release whose `sysml` evaluates the model (sysml-linux-amd64.tar.gz)
+
 registry:
   repo: Open-MBEE/repo-registry
   ref: 858cf1f0839256b92e2d86ff9b3276f6cb5a8945

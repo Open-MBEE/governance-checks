@@ -1,538 +1,127 @@
 #!/usr/bin/env python3
-"""Measure Open-MBEE repositories against the repo-registry policies.
+"""Measure Open-MBEE repositories against the repo-registry policies, with the verdicts decided in SysML v2.
 
-Each automated check in a repo-registry policy (data/policies/*.yaml, `checks.automated[].id`) is one function
-here, named after the check and reading what the policy's `reads:` line says it reads, through `gh api`. Each
-attested check is reported from the `attest:` block of the repository's entry in repos.yaml. Nothing else is
-decided here: which policies apply to a repository comes from the policy's `applies_if` evaluated against the
-type and stage the entry asks to be measured at (tier from the registry's kinds table).
+Pipeline: model.py generates the governance model from the pinned registry (one requirement def per check,
+`model/`); sense.py observes the facts each check reads through `gh api` (build/measurements.json); OpenSysML
+imports the facts into the model and evaluates every `satisfy` assertion (`sysml -import … -satisfy -json`);
+this driver maps the verdicts to the table and compares them with baseline.json.
 
-Statuses: pass, fail, unreadable (the token lacks the permission the check names), attested, unattested,
-n/a (the policy does not apply at that type/stage), unimplemented (an org-level check that needs the registry's
-own scripts). Compliance failures are reported, never raised; the exit code is non-zero only for a regression
-against baseline.json or a construction error (bad configuration, gh missing).
+Statuses: pass, fail, exception (fails, but the registry records an accepted deviation), unreadable (a fact the
+token could not read, so the assertion is unresolved), attested, unattested, n/a (the policy is not in effect
+at the type/stage the entry is measured at). Compliance failures are reported, never raised; the exit code is
+non-zero only for a regression against baseline.json or a construction error.
 """
 from __future__ import annotations
 
 import argparse
-import base64
-import datetime as dt
-import fnmatch
 import json
 import os
 import pathlib
 import re
+import shutil
 import subprocess
 import sys
 
 import yaml
 
-SEMVER = re.compile(r"^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
-CODEOWNERS_PATHS = (".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS")
-SBOM_GLOBS = ("*.spdx.json", "*.spdx", "*.cdx.json", "*bom*.json")
-ORDER = ["fail", "unreadable", "unattested", "unimplemented", "pass", "exception", "attested", "n/a"]
-GOOD = {"pass", "exception", "attested", "n/a"}
-# Transcribed from an attested check's statement when it binds a narrower kind than its policy
-# (semantic-versioning: "For graduated tools: ..."). Drop an entry once the registry carries the rule.
-CHECK_APPLIES = {"stable-release-policy": {"attr": "stage", "eq": "graduated"}}
+from common import GOOD, ORDER, GitHub, Registry
+from model import assertion, element, generate, in_effect
+from sense import Repository
+
+SUBJECT = re.compile(r"^satisfy '(?P<name>.+?): (?P<check>[a-z0-9-]+)' by ")
+VERDICT = {"holds": "pass", "fails": "fail", "unresolved": "unreadable"}
 
 
-def now() -> dt.datetime:
-    return dt.datetime.now(dt.timezone.utc)
+def sysml_binary(explicit: str | None) -> str:
+    path = explicit or os.environ.get("OPENSYSML_SYSML") or shutil.which("sysml")
+    if not path:
+        raise SystemExit("construction error: no `sysml` on PATH (set OPENSYSML_SYSML or --sysml)")
+    return path
 
 
-def parse_time(s: str) -> dt.datetime:
-    return dt.datetime.fromisoformat(s.replace("Z", "+00:00"))
+def run_sysml(binary: str, args: list[str], ok_exits=(0,)):
+    proc = subprocess.run([binary, *args], capture_output=True, text=True)
+    if proc.returncode not in ok_exits:
+        raise SystemExit(f"construction error: {binary} {' '.join(args)} exited {proc.returncode}:\n{proc.stdout}{proc.stderr}")
+    return proc.stdout
 
 
-class GitHub:
-    """Thin wrapper over `gh api`: returns (http_status, parsed_json_or_None)."""
-
-    def __init__(self, env: dict | None = None):
-        self.env = {**os.environ, **(env or {})}
-        self.cache: dict[tuple, tuple[int, object]] = {}
-
-    def api(self, path: str, *, paginate: bool = False, method: str | None = None):
-        key = (path, paginate, method)
-        if key in self.cache:
-            return self.cache[key]
-        cmd = ["gh", "api", path]
-        if paginate:
-            cmd += ["--paginate", "--slurp"]
-        if method:
-            cmd += ["--method", method]
-        proc = subprocess.run(cmd, capture_output=True, text=True, env=self.env)
-        if proc.returncode == 0:
-            body = proc.stdout.strip()
-            data = json.loads(body) if body else None
-            if paginate and isinstance(data, list) and data and isinstance(data[0], list):
-                data = [item for page in data for item in page]
-            status = 204 if body == "" else 200
-            result = (status, data)
-        else:
-            m = re.search(r"\(HTTP (\d{3})\)", proc.stderr)
-            status = int(m.group(1)) if m else 0
-            data = None
-            try:
-                data = json.loads(proc.stdout) if proc.stdout.strip() else None
-            except json.JSONDecodeError:
-                pass
-            result = (status, data if data is not None else {"message": proc.stderr.strip()})
-        self.cache[key] = result
-        return result
-
-    def graphql(self, query: str, **variables):
-        cmd = ["gh", "api", "graphql", "-f", f"query={query}"]
-        for k, v in variables.items():
-            cmd += ["-f", f"{k}={v}"]
-        proc = subprocess.run(cmd, capture_output=True, text=True, env=self.env)
-        if proc.returncode != 0:
-            return (0, {"message": proc.stderr.strip()})
-        return (200, json.loads(proc.stdout))
-
-
-class Registry:
-    def __init__(self, root: pathlib.Path):
-        self.root = root
-        self.policies = []
-        for f in sorted((root / "data/policies").glob("*.yaml")):
-            d = yaml.safe_load(f.read_text())
-            if isinstance(d, dict) and d.get("id") and d.get("checks") is not None:
-                self.policies.append(d)
-        kinds = yaml.safe_load((root / "data/taxonomy/kinds.yaml").read_text())
-        self.kinds = kinds["kinds"]
-        self.type_topics = {v: k for k, v in kinds.get("type_topics", {}).items()}
-        m = yaml.safe_load((root / "data/maintainers.yaml").read_text())
-        self.maintainers = m.get("maintainers") or {}
-        dev = yaml.safe_load((root / "data/deviations.yaml").read_text()) or {}
-        self.deviations = {(str(d["repo_id"]), d["policy"]): d for d in dev.get("deviations") or []}
-        lic = next(p for p in self.policies if p["id"] == "license-by-type")
-        self.allowed_licenses = lic["allowed_licenses"]
-
-    def tier(self, type_: str, stage: str) -> str:
-        try:
-            return self.kinds[type_][stage]["tier"]
-        except KeyError as e:
-            raise SystemExit(f"construction error: no kind {type_}/{stage} in kinds.yaml") from e
-
-
-def applies(rule, attrs: dict) -> bool:
-    if rule is None:
-        return True
-    if "all" in rule:
-        return all(applies(r, attrs) for r in rule["all"])
-    if "any" in rule:
-        return any(applies(r, attrs) for r in rule["any"])
-    if "not" in rule:
-        return not applies(rule["not"], attrs)
-    value = attrs.get(rule["attr"])
-    if "eq" in rule:
-        return value == rule["eq"]
-    if "in" in rule:
-        return value in rule["in"]
-    raise SystemExit(f"construction error: unsupported applies_if clause {rule}")
-
-
-# ----------------------------------------------------------------------------------------------- repository checks
-
-class Repo:
-    def __init__(self, gh: GitHub, registry: Registry, entry: dict):
-        self.gh = gh
-        self.registry = registry
-        self.entry = entry
-        self.full = entry["name"]
-        self.owner, self.name = self.full.split("/", 1)
-        self.type = entry["type"]
-        self.stage = entry["stage"]
-        self.tier = registry.tier(self.type, self.stage)
-        status, data = gh.api(f"repos/{self.full}")
-        if status != 200:
-            raise SystemExit(f"construction error: cannot read {self.full} (HTTP {status}): {data}")
-        self.data = data
-        self.default_branch = data["default_branch"]
-
-    def attrs(self):
-        return {"type": self.type, "stage": self.stage, "tier": self.tier}
-
-    # helpers
-    def rules(self):
-        return self.gh.api(f"repos/{self.full}/rules/branches/{self.default_branch}")
-
-    def protection(self):
-        return self.gh.api(f"repos/{self.full}/branches/{self.default_branch}/protection")
-
-    def rule_of(self, type_):
-        status, rules = self.rules()
-        if status != 200:
-            return None
-        return next((r for r in rules if r.get("type") == type_), None)
-
-    def codeowners_text(self):
-        """(path, text, None) when found, (None, None, None) when absent, (None, None, status) when unreadable."""
-        denied = None
-        for path in CODEOWNERS_PATHS:
-            status, data = self.gh.api(f"repos/{self.full}/contents/{path}")
-            if status == 200:
-                return path, base64.b64decode(data["content"]).decode(), None
-            if status != 404:
-                denied = status
-        return None, None, denied
-
-    def latest_release(self):
-        return self.gh.api(f"repos/{self.full}/releases/latest")
-
-    # --- archive-notice
-    def check_archived(self):
-        return ("pass", "archived") if self.data.get("archived") else ("fail", "not archived")
-
-    # --- change-review
-    def check_review_required(self):
-        rule = self.rule_of("pull_request")
-        if rule is not None:
-            p = rule.get("parameters") or {}
-            n, co = p.get("required_approving_review_count", 0), p.get("require_code_owner_review", False)
-            ok = n >= 1 and co
-            return ("pass" if ok else "fail", f"ruleset: approvals={n}, code_owner_review={co}")
-        status, prot = self.protection()
-        if status == 200:
-            r = prot.get("required_pull_request_reviews") or {}
-            n, co = r.get("required_approving_review_count", 0), r.get("require_code_owner_reviews", False)
-            return ("pass" if n >= 1 and co else "fail", f"classic: approvals={n}, code_owner_review={co}")
-        if status in (403, 404):
-            s, rules = self.rules()
-            if s == 200:
-                return ("fail", "no pull_request rule on the default branch; classic protection unreadable")
-            return ("unreadable", f"rules HTTP {s}, protection HTTP {status}")
-        return ("unreadable", f"protection HTTP {status}")
-
-    def check_checks_required(self):
-        rule = self.rule_of("required_status_checks")
-        if rule is not None:
-            ctx = [c["context"] for c in (rule.get("parameters") or {}).get("required_status_checks", [])]
-            return ("pass" if ctx else "fail", "required: " + ", ".join(ctx))
-        status, prot = self.protection()
-        if status == 200:
-            ok = bool(prot.get("required_status_checks"))
-            return ("pass" if ok else "fail", "classic protection")
-        s, _ = self.rules()
-        if s == 200:
-            return ("fail", "no required_status_checks rule on the default branch")
-        return ("unreadable", f"rules HTTP {s}, protection HTTP {status}")
-
-    # --- codeowners
-    def check_codeowners_present(self):
-        path, _, denied = self.codeowners_text()
-        if denied:
-            return ("unreadable", f"contents HTTP {denied}")
-        return ("pass", path) if path else ("fail", "no CODEOWNERS at .github/, root or docs/")
-
-    def check_codeowners_valid(self):
-        status, data = self.gh.api(f"repos/{self.full}/codeowners/errors")
-        if status != 200:
-            return ("unreadable", f"HTTP {status}")
-        errors = data.get("errors") or []
-        return ("pass" if not errors else "fail", f"{len(errors)} error(s)")
-
-    # --- contributing / project-files
-    def _profile_file(self, key):
-        status, data = self.gh.api(f"repos/{self.full}/community/profile")
-        if status != 200:
-            return ("unreadable", f"HTTP {status}")
-        present = (data.get("files") or {}).get(key) is not None
-        return ("pass" if present else "fail", f"community profile files.{key}")
-
-    def check_contributing_present(self):
-        return self._profile_file("contributing")
-
-    def check_readme_present(self):
-        return self._profile_file("readme")
-
-    # --- dependency-management
-    def check_dependabot_alerts_on(self):
-        # GraphQL answers for any reader; the REST endpoint returns 404 both for "disabled" and "no admin read".
-        status, data = self.gh.graphql(
-            "query($owner:String!,$name:String!){repository(owner:$owner,name:$name){hasVulnerabilityAlertsEnabled}}",
-            owner=self.owner, name=self.name)
-        if status == 200 and ((data.get("data") or {}).get("repository") or {}).get("hasVulnerabilityAlertsEnabled") is not None:
-            on = data["data"]["repository"]["hasVulnerabilityAlertsEnabled"]
-            return ("pass" if on else "fail", f"hasVulnerabilityAlertsEnabled={on}")
-        status, _ = self.gh.api(f"repos/{self.full}/vulnerability-alerts")
-        if status == 204:
-            return ("pass", "enabled")
-        return ("unreadable", f"HTTP {status}: disabled or no Administration read")
-
-    # --- history-protection
-    def _rule_or_classic(self, rule_type, classic_key, label):
-        if self.rule_of(rule_type) is not None:
-            return ("pass", f"ruleset: {rule_type}")
-        status, prot = self.protection()
-        if status == 200:
-            off = not (prot.get(classic_key) or {}).get("enabled", False)
-            return ("pass" if off else "fail", f"classic: {classic_key}.enabled={not off}")
-        s, _ = self.rules()
-        if s == 200:
-            return ("fail", f"no {rule_type} rule on the default branch; classic protection HTTP {status}")
-        return ("unreadable", f"rules HTTP {s}, protection HTTP {status}")
-
-    def check_no_force_push(self):
-        return self._rule_or_classic("non_fast_forward", "allow_force_pushes", "force push")
-
-    def check_no_deletion(self):
-        return self._rule_or_classic("deletion", "allow_deletions", "deletion")
-
-    # --- license-by-type
-    def check_license_allowed(self):
-        spdx = (self.data.get("license") or {}).get("spdx_id")
-        allowed = self.registry.allowed_licenses.get(self.type, [])
-        if spdx in allowed:
-            return ("pass", spdx)
-        dev = self.registry.deviations.get((str(self.data.get("id")), "license-by-type"))
-        if dev:
-            return ("exception", f"{spdx}; accepted exception: {dev.get('reason')} (approved by {dev.get('approved_by')})")
-        return ("fail", f"{spdx or 'missing'}; allowed for {self.type}: {', '.join(allowed)}")
-
-    # --- release-integrity
-    def check_sbom_attached(self):
-        status, rel = self.latest_release()
-        if status == 404:
-            return ("fail", "no non-prerelease release")
-        if status != 200:
-            return ("unreadable", f"HTTP {status}")
-        names = [a["name"] for a in rel.get("assets", [])]
-        hits = [n for n in names if any(fnmatch.fnmatch(n.lower(), g) for g in SBOM_GLOBS)]
-        return ("pass" if hits else "fail", f"{rel['tag_name']}: " + (", ".join(hits) or f"{len(names)} asset(s), no SBOM"))
-
-    def check_release_immutable(self):
-        status, rel = self.latest_release()
-        if status == 404:
-            return ("fail", "no non-prerelease release")
-        if status != 200:
-            return ("unreadable", f"HTTP {status}")
-        return ("pass" if rel.get("immutable") else "fail", f"{rel['tag_name']}: immutable={rel.get('immutable')}")
-
-    # --- secret-protection
-    def check_push_protection_on(self):
-        sa = self.data.get("security_and_analysis")
-        if not sa:
-            return ("unreadable", "security_and_analysis absent (needs admin read)")
-        st = (sa.get("secret_scanning_push_protection") or {}).get("status")
-        return ("pass" if st == "enabled" else "fail", f"secret_scanning_push_protection={st}")
-
-    # --- security-policy
-    def check_security_policy_present(self):
-        status, data = self.gh.graphql(
-            "query($owner:String!,$name:String!){repository(owner:$owner,name:$name){isSecurityPolicyEnabled}}",
-            owner=self.owner, name=self.name)
-        if status != 200:
-            return ("unreadable", str(data)[:80])
-        ok = data["data"]["repository"]["isSecurityPolicyEnabled"]
-        return ("pass" if ok else "fail", f"isSecurityPolicyEnabled={ok}")
-
-    def check_private_reporting_on(self):
-        status, data = self.gh.api(f"repos/{self.full}/private-vulnerability-reporting")
-        if status != 200:
-            return ("unreadable", f"HTTP {status}")
-        return ("pass" if data.get("enabled") else "fail", f"enabled={data.get('enabled')}")
-
-    # --- semantic-versioning
-    def check_semver_tags(self):
-        status, rels = self.gh.api(f"repos/{self.full}/releases?per_page=100", paginate=True)
-        if status != 200:
-            return ("unreadable", f"HTTP {status}")
-        cutoff = now() - dt.timedelta(days=365)
-        recent = [r for r in rels if not r.get("draft") and r.get("published_at") and parse_time(r["published_at"]) >= cutoff]
-        bad = [r["tag_name"] for r in recent if not SEMVER.match(r["tag_name"])]
-        if not recent:
-            return ("pass", "no release in the last 12 months")
-        return ("pass" if not bad else "fail", f"{len(recent)} release(s); off-pattern: {', '.join(bad[:5]) or 'none'}")
-
-    # --- static-analysis
-    def check_code_scanning_configured(self):
-        status, data = self.gh.api(f"repos/{self.full}/code-scanning/default-setup")
-        if status == 200 and data.get("state") == "configured":
-            return ("pass", "default setup")
-        s2, analyses = self.gh.api(f"repos/{self.full}/code-scanning/analyses?per_page=1")
-        if s2 == 200:
-            return ("pass" if analyses else "fail", f"{'analyses present' if analyses else 'no analyses'}; default-setup HTTP {status}")
-        if s2 == 404:
-            return ("fail", "code scanning not enabled")
-        return ("unreadable", f"default-setup HTTP {status}, analyses HTTP {s2}")
-
-    def _code_scanning_open(self):
-        return self.gh.api(f"repos/{self.full}/code-scanning/alerts?state=open&per_page=100", paginate=True)
-
-    def check_no_open_critical(self):
-        status, alerts = self._code_scanning_open()
-        if status == 404:
-            return ("fail", "code scanning not enabled")
-        if status != 200:
-            return ("unreadable", f"HTTP {status}")
-        cutoff = now() - dt.timedelta(days=14)
-        old = [a for a in alerts if (a.get("rule") or {}).get("security_severity_level") == "critical"
-               and parse_time(a["created_at"]) < cutoff]
-        return ("pass" if not old else "fail", f"{len(old)} critical alert(s) older than 14 days")
-
-    # --- vulnerability-remediation
-    def check_dependency_alerts_on_time(self):
-        status, alerts = self.gh.api(f"repos/{self.full}/dependabot/alerts?state=open&per_page=100", paginate=True)
-        if status != 200:
-            return ("unreadable", f"HTTP {status}")
-        late = []
-        for a in alerts:
-            sev = (a.get("security_advisory") or {}).get("severity")
-            age = now() - parse_time(a["created_at"])
-            if (sev == "critical" and age > dt.timedelta(days=14)) or (sev in ("high", "medium") and age > dt.timedelta(days=60)):
-                late.append(f"{a['dependency']['package']['name']}({sev},{age.days}d)")
-        return ("pass" if not late else "fail", f"{len(alerts)} open; late: {', '.join(late[:5]) or 'none'}")
-
-    def check_scanning_clean(self):
-        status, alerts = self._code_scanning_open()
-        if status == 404:
-            return ("fail", "code scanning not enabled")
-        if status != 200:
-            return ("unreadable", f"HTTP {status}")
-        cutoff = now() - dt.timedelta(days=60)
-        old = [a for a in alerts if (a.get("rule") or {}).get("security_severity_level") in ("medium", "high", "critical")
-               and parse_time(a["created_at"]) < cutoff]
-        return ("pass" if not old else "fail", f"{len(old)} medium+ alert(s) older than 60 days")
-
-    # --- verified-code-owners
-    def check_verified_owners(self):
-        path, text, denied = self.codeowners_text()
-        if denied:
-            return ("unreadable", f"contents HTTP {denied}")
-        if not text:
-            return ("fail", "no CODEOWNERS")
-        lines = [l for l in text.splitlines() if l.strip() and not l.lstrip().startswith("#")]
-        handles = {h for line in lines for h in re.findall(r"@([A-Za-z0-9-]+)(?![/\w])", line)}
-        problems, unreadable = [], []
-        for org, slug in sorted({t for line in lines for t in re.findall(r"@([A-Za-z0-9-]+)/([A-Za-z0-9_.-]+)", line)}):
-            status, members = self.gh.api(f"orgs/{org}/teams/{slug}/members?per_page=100", paginate=True)
-            if status != 200:
-                unreadable.append(f"@{org}/{slug}: team members HTTP {status}")
+def sense_all(gh: GitHub, registry: Registry, entries: list[dict]):
+    """Facts per element for -import, plus what each sensor said, per repository and check."""
+    records, notes = [], {}
+    for e in entries:
+        repo = Repository(gh, registry, e)
+        facts, said = {}, {}
+        for policy, check, kind in in_effect(registry, e):
+            if kind != "automated":
                 continue
-            handles.update(m["login"] for m in members)
-        by_login = {m.get("login"): m for m in self.registry.maintainers.values()}
-        cutoff = now() - dt.timedelta(days=365)
-        for h in sorted(handles):
-            m = by_login.get(h)
-            if not m:
-                problems.append(f"{h}: not in maintainers.yaml")
-                continue
-            v = m.get("verified") or m.get("verified_on") or (m.get("verification") or {}).get("date")
-            if not v or parse_time(str(v) + ("T00:00:00+00:00" if len(str(v)) == 10 else "")) < cutoff:
-                problems.append(f"{h}: no verification within 12 months")
-        if problems:
-            return ("fail", "; ".join(problems + unreadable))
-        if unreadable:
-            return ("unreadable", "; ".join(unreadable))
-        return ("pass", f"{len(handles)} owner(s) verified")
-
-    # --- workflow-least-privilege
-    def check_default_token_read(self):
-        status, data = self.gh.api(f"repos/{self.full}/actions/permissions/workflow")
-        if status != 200:
-            return ("unreadable", f"HTTP {status}")
-        v = data.get("default_workflow_permissions")
-        return ("pass" if v == "read" else "fail", f"default_workflow_permissions={v}")
-
-    def type_topic(self):
-        """The `openmbee-<type>` topic (kinds.yaml type_topics) operators declare their type with: not a policy
-        check, reported beside the table."""
-        topic = self.registry.type_topics.get(self.type)
-        return {"expected": topic, "declared": topic in (self.data.get("topics") or [])}
+            sensor = repo.sensor(check["id"])
+            if sensor is None:
+                raise SystemExit(f"construction error: no sensor for {policy['id']}/{check['id']}")
+            s = sensor()
+            for k, v in s.facts.items():
+                if k in facts and facts[k] != v:
+                    raise SystemExit(f"construction error: {e['name']}: sensors disagree on {k}: {facts[k]} vs {v}")
+                facts[k] = v
+            said[check["id"]] = s
+        records.append({"element": element(e["name"]), **facts})
+        notes[e["name"]] = {"said": said, "topic": repo.type_topic(), "id": repo.data.get("id")}
+    return records, notes
 
 
-# ------------------------------------------------------------------------------------------------------ org checks
-
-class Org:
-    def __init__(self, gh: GitHub, registry: Registry, entry: dict):
-        self.gh, self.registry, self.entry = gh, registry, entry
-        self.full = entry["name"]
-        self.type, self.stage = entry["type"], entry["stage"]
-        self.tier = registry.tier(self.type, self.stage)
-
-    def attrs(self):
-        return {"type": self.type, "stage": self.stage, "tier": self.tier}
-
-    def _org(self):
-        return self.gh.api(f"orgs/{self.full}")
-
-    def check_owner_count(self):
-        status, admins = self.gh.api(f"orgs/{self.full}/members?role=admin&per_page=100", paginate=True)
-        if status != 200:
-            return ("unreadable", f"HTTP {status}")
-        return ("pass" if 2 <= len(admins) <= 3 else "fail", f"{len(admins)} owner(s)")
-
-    def check_two_factor_required(self):
-        status, org = self._org()
-        v = org.get("two_factor_requirement_enabled") if status == 200 else None
-        if v is None:
-            return ("unreadable", "returned only to owners")
-        return ("pass" if v else "fail", f"two_factor_requirement_enabled={v}")
-
-    def check_base_permission_read(self):
-        status, org = self._org()
-        v = org.get("default_repository_permission") if status == 200 else None
-        if v is None:
-            return ("unreadable", "returned only to owners")
-        return ("pass" if v in ("read", "none") else "fail", f"default_repository_permission={v}")
-
-    def check_owners_public(self):
-        s1, admins = self.gh.api(f"orgs/{self.full}/members?role=admin&per_page=100", paginate=True)
-        s2, public = self.gh.api(f"orgs/{self.full}/public_members?per_page=100", paginate=True)
-        if s1 != 200 or s2 != 200:
-            return ("unreadable", f"HTTP {s1}/{s2}")
-        hidden = {a["login"] for a in admins} - {p["login"] for p in public}
-        return ("pass" if not hidden else "fail", f"{len(hidden)} owner(s) with concealed membership")
-
-    def check_maintainers_public(self):
-        status, public = self.gh.api(f"orgs/{self.full}/public_members?per_page=100", paginate=True)
-        if status != 200:
-            return ("unreadable", f"HTTP {status}")
-        logins = {p["login"] for p in public}
-        missing = [m["login"] for m in self.registry.maintainers.values() if m.get("login") not in logins]
-        return ("pass" if not missing else "fail", "not public: " + (", ".join(missing) or "none"))
-
-    def check_match(self):
-        return ("unimplemented", "needs repo-registry scripts/org.py")
+def evaluate(binary: str, model_dir: pathlib.Path, build: pathlib.Path, records: list[dict]) -> dict:
+    """Verdict per (repository, check) from OpenSysML: holds / fails / unresolved, with its report lines."""
+    build.mkdir(parents=True, exist_ok=True)
+    (build / "measurements.json").write_text(json.dumps(records, indent=2) + "\n")
+    # -import binds values in one model file, so the two generated packages are joined for the run.
+    model = build / "model.sysml"
+    model.write_text((model_dir / "governance.sysml").read_text() + "\n" + (model_dir / "repositories.sysml").read_text())
+    run_sysml(binary, [str(model), "-import", str(build / "measurements.json"), "-convert", "sysml", "-o", str(build / "bound.sysml")])
+    out = run_sysml(binary, ["-satisfy", "-json", str(build / "bound.sysml")], ok_exits=(0, 1, 2))
+    (build / "verdicts.json").write_text(out)
+    report = json.loads(out)
+    verdicts = {}
+    for c in report["checks"]:
+        m = SUBJECT.match(c["subject"])
+        if m:
+            verdicts[(m["name"], m["check"])] = c
+    return verdicts
 
 
-# ----------------------------------------------------------------------------------------------------------- driver
-
-def run_entry(gh, registry, entry):
-    subject = Org(gh, registry, entry) if entry.get("scope") == "org" else Repo(gh, registry, entry)
-    attest = entry.get("attest") or {}
-    rows = []
-    for policy in registry.policies:
-        scope = policy.get("scope", "repository")
-        if (scope == "org") != isinstance(subject, Org):
-            continue
-        in_effect = applies(policy.get("applies_if"), subject.attrs())
-        deviation = registry.deviations.get((str(getattr(subject, "data", {}).get("id")), policy["id"]))
-        for check in policy["checks"].get("automated") or []:
-            fn = getattr(subject, "check_" + check["id"].replace("-", "_"), None)
-            if not in_effect:
-                status, detail = "n/a", ""
-            elif fn is None:
-                status, detail = "unimplemented", ""
-            else:
-                status, detail = fn()
-                if status == "fail" and deviation:
-                    status, detail = "exception", f"{detail}; accepted exception: {deviation.get('reason')}"
-            rows.append({"policy": policy["id"], "check": check["id"], "kind": "automated", "status": status, "detail": detail})
-        for check in policy["checks"].get("attested") or []:
-            if not in_effect or not applies(CHECK_APPLIES.get(check["id"]), subject.attrs()):
-                status, detail = "n/a", ""
-            elif check["id"] in attest:
-                status, detail = "attested", str(attest[check["id"]])
-            else:
-                status, detail = "unattested", "no entry under attest: in repos.yaml"
-            rows.append({"policy": policy["id"], "check": check["id"], "kind": "attested", "status": status, "detail": detail})
-    out = {"name": subject.full, "type": subject.type, "stage": subject.stage, "tier": subject.tier, "checks": rows}
-    if isinstance(subject, Repo):
-        out["topic"] = subject.type_topic()
-    return out
+def run_all(registry: Registry, entries: list[dict], verdicts: dict, notes: dict):
+    results = []
+    for e in entries:
+        attest = e.get("attest") or {}
+        said, topic, repo_id = notes[e["name"]]["said"], notes[e["name"]]["topic"], notes[e["name"]]["id"]
+        effective = {(p["id"], c["id"]): kind for p, c, kind in in_effect(registry, e)}
+        rows = []
+        for p in (p for p in registry.policies if p.get("scope", "repository") == "repository"):
+            deviation = registry.deviations.get((str(repo_id), p["id"]))
+            for kind in ("automated", "attested"):
+                for c in p["checks"].get(kind) or []:
+                    if (p["id"], c["id"]) not in effective:
+                        status, detail = "n/a", ""
+                    else:
+                        v = verdicts.get((e["name"], c["id"]))
+                        if v is None:
+                            raise SystemExit(f"construction error: no verdict for {assertion(e['name'], c['id'])}")
+                        status = VERDICT.get(v["status"], "unreadable")
+                        if kind == "attested":
+                            status, detail = ("attested", str(attest[c["id"]])) if status == "pass" and c["id"] in attest else ("unattested", "no entry under attest: in repos.yaml")
+                        else:
+                            s = said[c["id"]]
+                            detail = s.unreadable or s.detail
+                            if s.unreadable:
+                                status = "unreadable"  # a verdict over a fact nobody observed is not a verdict
+                            elif status == "fail":
+                                cond = next((l.strip() for l in v["lines"] if "evaluated to false" in l), "")
+                                detail = f"{detail}; {cond}" if cond else detail
+                                if deviation:
+                                    status, detail = "exception", f"{detail}; accepted exception: {deviation.get('reason')}"
+                    rows.append({"policy": p["id"], "check": c["id"], "kind": kind, "status": status, "detail": detail})
+        results.append({"name": e["name"], "type": e["type"], "stage": e["stage"],
+                        "tier": registry.tier(e["type"], e["stage"]), "checks": rows, "topic": topic})
+    return results
 
 
 def summarize(results):
@@ -576,6 +165,9 @@ def main(argv=None):
     ap.add_argument("--config", default="repos.yaml")
     ap.add_argument("--registry", required=True, help="path to a checkout of Open-MBEE/repo-registry at the pinned ref")
     ap.add_argument("--only", action="append", help="repository (owner/name) to measure; repeatable")
+    ap.add_argument("--sysml", help="the OpenSysML `sysml` binary (default: $OPENSYSML_SYSML, then PATH)")
+    ap.add_argument("--model", default="model", help="where the generated model is written")
+    ap.add_argument("--build", default="build", help="where measurements, the bound model and the verdicts go")
     ap.add_argument("--json", dest="json_out", help="write the results here")
     ap.add_argument("--summary", help="write the Markdown summary here (default: stdout)")
     ap.add_argument("--baseline", default="baseline.json", help="empty string: do not compare")
@@ -584,11 +176,15 @@ def main(argv=None):
 
     config = yaml.safe_load(pathlib.Path(args.config).read_text())
     registry = Registry(pathlib.Path(args.registry))
-    gh = GitHub()
-    entries = config["repos"] + [{**o, "scope": "org"} for o in config.get("orgs") or []]
+    binary = sysml_binary(args.sysml)
+    entries = config["repos"]
     if args.only:
         entries = [e for e in entries if e["name"] in args.only]
-    results = [run_entry(gh, registry, e) for e in entries]
+
+    generate(registry, config, pathlib.Path(args.model))
+    records, notes = sense_all(GitHub(), registry, entries)
+    verdicts = evaluate(binary, pathlib.Path(args.model), pathlib.Path(args.build), records)
+    results = run_all(registry, entries, verdicts, notes)
 
     text = summarize(results)
     if args.summary:
