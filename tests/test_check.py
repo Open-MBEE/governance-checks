@@ -355,3 +355,10 @@ def test_regressions_on_good_to_bad_or_unreadable():
     baseline = {"o/r": {"checks": [{"check": "a", "status": "pass"}, {"check": "b", "status": "pass"}, {"check": "c", "status": "fail"}]}}
     regs = check.regressions(results, baseline)
     assert [r.split(" (")[0] for r in regs] == ["o/r: p/a pass -> fail", "o/r: p/b pass -> unreadable"]
+
+
+def test_a_kind_the_registry_does_not_define_is_a_construction_error():
+    reg = registry()
+    type_, stage = next((t, s) for t in reg.kinds for s in ("sandbox", "incubating", "graduated", "archived") if s not in reg.kinds[t])
+    with pytest.raises(SystemExit, match="no kind"):
+        model.repositories_sysml(reg, [{"name": "o/a", "type": type_, "stage": stage}])
