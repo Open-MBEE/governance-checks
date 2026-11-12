@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Sense the facts the repo-registry policies read, one sensor per automated check, through `gh api`.
 
-A sensor returns raw observations (a count, a flag, a string), never a verdict: the verdicts come from evaluating
-the generated SysML model (model.py) over these facts with OpenSysML. A fact the token cannot read is left out,
-which the model reports as unresolved and the table as `unreadable`.
+A sensor returns raw observations (a count, a flag, a string, an age in days), never a verdict and never a
+deadline: the model states the deadlines and OpenSysML evaluates them over these facts. A fact the token cannot
+read is left out, which the model reports as unresolved and the table as `unreadable`.
 """
 from __future__ import annotations
 
@@ -13,6 +13,13 @@ import fnmatch
 import re
 
 from common import CODEOWNERS_PATHS, SBOM_GLOBS, SEMVER, GitHub, Registry, now, parse_time
+
+DAY = dt.timedelta(days=1)
+
+
+def oldest_days(times) -> float:
+    """Days since the earliest of the times; 0 when there is none."""
+    return max(((now() - t) / DAY for t in times), default=0.0)
 
 
 class Sensed:
@@ -36,16 +43,12 @@ class Repository:
         self.gh, self.registry, self.entry = gh, registry, entry
         self.full = entry["name"]
         self.owner, self.name = self.full.split("/", 1)
-        self.type, self.stage = entry["type"], entry["stage"]
-        self.tier = registry.tier(self.type, self.stage)
+        self.type = entry["type"]
         status, data = gh.api(f"repos/{self.full}")
         if status != 200:
             raise SystemExit(f"construction error: cannot read {self.full} (HTTP {status}): {data}")
         self.data = data
         self.default_branch = data["default_branch"]
-
-    def attrs(self):
-        return {"type": self.type, "stage": self.stage, "tier": self.tier}
 
     def sensor(self, check_id: str):
         return getattr(self, "sense_" + check_id.replace("-", "_"), None)
@@ -236,12 +239,13 @@ class Repository:
         status, rels = self.gh.api(f"repos/{self.full}/releases?per_page=100", paginate=True)
         if status != 200:
             return unreadable(f"HTTP {status}")
-        cutoff = now() - dt.timedelta(days=365)
-        recent = [r for r in rels if not r.get("draft") and r.get("published_at") and parse_time(r["published_at"]) >= cutoff]
-        bad = [r["tag_name"] for r in recent if not SEMVER.match(r["tag_name"])]
-        if not recent:
-            return facts(offPatternReleaseTags=0, detail="no release in the last 12 months")
-        return facts(offPatternReleaseTags=len(bad), detail=f"{len(recent)} release(s); off-pattern: {', '.join(bad[:5]) or 'none'}")
+        published = [r for r in rels if not r.get("draft") and r.get("published_at")]
+        bad = sorted((r for r in published if not SEMVER.match(r["tag_name"])), key=lambda r: r["published_at"], reverse=True)
+        newest = min(((now() - parse_time(r["published_at"])) / DAY for r in bad), default=0.0)
+        detail = f"{len(published)} release(s); off-pattern: {', '.join(r['tag_name'] for r in bad[:5]) or 'none'}"
+        if bad:
+            detail += f" (newest {newest:.0f} days ago)"
+        return facts(offPatternReleases=len(bad), newestOffPatternReleaseDays=newest, detail=detail)
 
     # --- static-analysis
     def sense_code_scanning_configured(self):
@@ -255,34 +259,35 @@ class Repository:
             return facts(codeScanningConfigured=False, detail="code scanning not enabled")
         return unreadable(f"default-setup HTTP {status}, analyses HTTP {s2}")
 
-    def _code_scanning_overdue(self, fact, levels, days):
+    def _oldest_scanning_alert(self, fact, levels):
         status, alerts = self.gh.api(f"repos/{self.full}/code-scanning/alerts?state=open&per_page=100", paginate=True)
         if status == 404:
-            return facts(codeScanningEnabled=False, **{fact: 0}, detail="code scanning not enabled")
+            return facts(codeScanningEnabled=False, **{fact: 0.0}, detail="code scanning not enabled")
         if status != 200:
             return unreadable(f"HTTP {status}")
-        cutoff = now() - dt.timedelta(days=days)
-        old = [a for a in alerts if (a.get("rule") or {}).get("security_severity_level") in levels and parse_time(a["created_at"]) < cutoff]
-        return facts(codeScanningEnabled=True, **{fact: len(old)}, detail=f"{len(old)} {'/'.join(levels)} alert(s) older than {days} days")
+        ages = [parse_time(a["created_at"]) for a in alerts if (a.get("rule") or {}).get("security_severity_level") in levels]
+        oldest = oldest_days(ages)
+        return facts(codeScanningEnabled=True, **{fact: oldest},
+                     detail=f"{len(ages)} open {'/'.join(levels)} alert(s)" + (f"; oldest {oldest:.0f} days" if ages else ""))
 
     def sense_no_open_critical(self):
-        return self._code_scanning_overdue("criticalAlertsOverdue", ("critical",), 14)
+        return self._oldest_scanning_alert("oldestCriticalScanningAlertDays", ("critical",))
 
     def sense_scanning_clean(self):
-        return self._code_scanning_overdue("mediumPlusAlertsOverdue", ("medium", "high", "critical"), 60)
+        return self._oldest_scanning_alert("oldestMediumPlusScanningAlertDays", ("medium", "high", "critical"))
 
     # --- vulnerability-remediation
     def sense_dependency_alerts_on_time(self):
         status, alerts = self.gh.api(f"repos/{self.full}/dependabot/alerts?state=open&per_page=100", paginate=True)
         if status != 200:
             return unreadable(f"HTTP {status}")
-        late = []
-        for a in alerts:
-            sev = (a.get("security_advisory") or {}).get("severity")
-            age = now() - parse_time(a["created_at"])
-            if (sev == "critical" and age > dt.timedelta(days=14)) or (sev in ("high", "medium") and age > dt.timedelta(days=60)):
-                late.append(f"{a['dependency']['package']['name']}({sev},{age.days}d)")
-        return facts(dependabotAlertsOverdue=len(late), detail=f"{len(alerts)} open; late: {', '.join(late[:5]) or 'none'}")
+        by = lambda *sev: [a for a in alerts if (a.get("security_advisory") or {}).get("severity") in sev]
+        age = lambda a: (now() - parse_time(a["created_at"])) / DAY
+        oldest = sorted(by("critical", "high", "medium"), key=age, reverse=True)[:5]
+        named = ", ".join(f"{a['dependency']['package']['name']}({a['security_advisory']['severity']},{age(a):.0f}d)" for a in oldest)
+        return facts(oldestCriticalDependabotAlertDays=oldest_days(parse_time(a["created_at"]) for a in by("critical")),
+                     oldestHighOrMediumDependabotAlertDays=oldest_days(parse_time(a["created_at"]) for a in by("high", "medium")),
+                     detail=f"{len(alerts)} open; oldest: {named or 'none'}")
 
     # --- verified-code-owners
     def sense_verified_owners(self):
@@ -290,10 +295,11 @@ class Repository:
         if denied:
             return unreadable(f"contents HTTP {denied}")
         if path is None:
-            return facts(codeownersPresent=False, codeOwners=0, unverifiedCodeOwners=0, detail="no CODEOWNERS")
+            return facts(codeownersPresent=False, codeOwners=0, codeOwnersNotMaintainers=0, codeOwnersNeverVerified=0,
+                         oldestCodeOwnerVerificationDays=0.0, detail="no CODEOWNERS")
         lines = [l for l in text.splitlines() if l.strip() and not l.lstrip().startswith("#")]
         handles = {h for line in lines for h in re.findall(r"@([A-Za-z0-9-]+)(?![/\w])", line)}
-        problems, blocked = [], []
+        blocked = []
         for org, slug in sorted({t for line in lines for t in re.findall(r"@([A-Za-z0-9-]+)/([A-Za-z0-9_.-]+)", line)}):
             status, members = self.gh.api(f"orgs/{org}/teams/{slug}/members?per_page=100", paginate=True)
             if status != 200:
@@ -301,19 +307,26 @@ class Repository:
                 continue
             handles.update(m["login"] for m in members)
         by_login = {m.get("login"): m for m in self.registry.maintainers.values()}
-        cutoff = now() - dt.timedelta(days=365)
+        strangers, never, verified = [], [], {}
         for h in sorted(handles):
             m = by_login.get(h)
             if not m:
-                problems.append(f"{h}: not in maintainers.yaml")
+                strangers.append(h)
                 continue
             v = m.get("verified") or m.get("verified_on") or (m.get("verification") or {}).get("date")
-            if not v or parse_time(str(v) + ("T00:00:00+00:00" if len(str(v)) == 10 else "")) < cutoff:
-                problems.append(f"{h}: no verification within 12 months")
-        if blocked and not problems:
+            if not v:
+                never.append(h)
+            else:
+                verified[h] = parse_time(str(v) + ("T00:00:00+00:00" if len(str(v)) == 10 else ""))
+        if blocked and not strangers and not never:
             return unreadable("; ".join(blocked))
-        return facts(codeownersPresent=True, codeOwners=len(handles), unverifiedCodeOwners=len(problems),
-                     detail="; ".join(problems + blocked) or (f"{len(handles)} owner(s) verified" if handles else f"{path} names no owner"))
+        oldest = oldest_days(verified.values())
+        said = [f"{h}: not in maintainers.yaml" for h in strangers] + [f"{h}: no verification date" for h in never]
+        if verified:
+            said.append(f"{len(verified)} owner(s) verified, the oldest {oldest:.0f} days ago")
+        return facts(codeownersPresent=True, codeOwners=len(handles), codeOwnersNotMaintainers=len(strangers),
+                     codeOwnersNeverVerified=len(never), oldestCodeOwnerVerificationDays=oldest,
+                     detail="; ".join(said + blocked) or f"{path} names no owner")
 
     # --- workflow-least-privilege
     def sense_default_token_read(self):

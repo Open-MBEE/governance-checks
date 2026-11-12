@@ -1,4 +1,4 @@
-"""Shared by sense.py, model.py and check.py: the GitHub reader, the pinned registry, and the applies_if evaluator."""
+"""Shared by sense.py, model.py and check.py: the GitHub reader and the pinned registry."""
 from __future__ import annotations
 
 import argparse
@@ -19,8 +19,8 @@ CODEOWNERS_PATHS = (".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS")
 SBOM_GLOBS = ("*.spdx.json", "*.spdx", "*.cdx.json", "*bom*.json")
 ORDER = ["fail", "unreadable", "unattested", "unimplemented", "pass", "exception", "attested", "n/a"]
 GOOD = {"pass", "exception", "attested", "n/a"}
-# Transcribed from an attested check's statement when it binds a narrower kind than its policy
-# (semantic-versioning: "For graduated tools: ..."). Drop an entry once the registry carries the rule.
+# An attested check whose statement binds a narrower kind than its policy (semantic-versioning: "For graduated
+# tools: ..."); the model's assumption must state it. Drop an entry once the registry carries the rule.
 CHECK_APPLIES = {"stable-release-policy": {"attr": "stage", "eq": "graduated"}}
 
 
@@ -95,26 +95,3 @@ class Registry:
         self.deviations = {(str(d["repo_id"]), d["policy"]): d for d in dev.get("deviations") or []}
         lic = next(p for p in self.policies if p["id"] == "license-by-type")
         self.allowed_licenses = lic["allowed_licenses"]
-
-    def tier(self, type_: str, stage: str) -> str:
-        try:
-            return self.kinds[type_][stage]["tier"]
-        except KeyError as e:
-            raise SystemExit(f"construction error: no kind {type_}/{stage} in kinds.yaml") from e
-
-
-def applies(rule, attrs: dict) -> bool:
-    if rule is None:
-        return True
-    if "all" in rule:
-        return all(applies(r, attrs) for r in rule["all"])
-    if "any" in rule:
-        return any(applies(r, attrs) for r in rule["any"])
-    if "not" in rule:
-        return not applies(rule["not"], attrs)
-    value = attrs.get(rule["attr"])
-    if "eq" in rule:
-        return value == rule["eq"]
-    if "in" in rule:
-        return value in rule["in"]
-    raise SystemExit(f"construction error: unsupported applies_if clause {rule}")

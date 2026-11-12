@@ -2,13 +2,14 @@
 """Measure Open-MBEE repositories against the repo-registry policies, with the verdicts decided in SysML v2.
 
 Pipeline: model/governance.sysml (hand-written: one requirement def per registry check) is the source; model.py
-derives model/repositories.sysml from repos.yaml; sense.py observes the facts each check reads through `gh api` (build/measurements.json); OpenSysML
-imports the facts into the model and evaluates every `satisfy` assertion through the `opensysml` client;
-this driver maps the verdicts to the table and compares them with baseline.json.
+derives model/repositories.sysml from repos.yaml (every registry check asserted of every repository); OpenSysML
+evaluates each assertion's assumption to say which are in effect; sense.py observes the facts those read through
+`gh api` (build/measurements.json); OpenSysML imports the facts into the model and evaluates every `satisfy`
+assertion; this driver maps the verdicts to the table and compares them with baseline.json.
 
 Statuses: pass, fail, exception (fails, but the registry records an accepted deviation), unreadable (a fact the
-token could not read, so the assertion is unresolved), attested, unattested, n/a (the policy is not in effect
-at the type/stage the entry is measured at). Compliance failures are reported, never raised; the exit code is
+token could not read, so the assertion is unresolved), attested, unattested, n/a (the requirement's assumption
+is false at the type/stage the entry is measured at). Compliance failures are reported, never raised; the exit code is
 non-zero only for a regression against baseline.json or a construction error.
 """
 from __future__ import annotations
@@ -24,7 +25,7 @@ import opensysml
 import yaml
 
 from common import GOOD, ORDER, GitHub, Registry
-from model import MODEL, Model, assertion, element, generate, in_effect
+from model import MODEL, Applicability, Model, assertion, element, generate, source
 from sense import Repository
 
 SUBJECT = re.compile(r"^Repositories::(?P<name>.+?): (?P<check>[a-z0-9-]+)$")
@@ -43,13 +44,13 @@ def connect(pin: str) -> opensysml.Connection:
         raise SystemExit(f"construction error: no sysml-grpc {pin}: {e}")
 
 
-def sense_all(gh: GitHub, registry: Registry, entries: list[dict]):
+def sense_all(gh: GitHub, registry: Registry, entries: list[dict], applicability: Applicability):
     """Facts per element for -import, plus what each sensor said, per repository and check."""
     records, notes = [], {}
     for e in entries:
         repo = Repository(gh, registry, e)
         facts, said = {}, {}
-        for policy, check, kind in in_effect(registry, e):
+        for policy, check, kind in applicability.in_effect(registry, e):
             if kind != "automated":
                 continue
             sensor = repo.sensor(check["id"])
@@ -71,11 +72,10 @@ def evaluate(conn: opensysml.Connection, model_dir: pathlib.Path, build: pathlib
     build.mkdir(parents=True, exist_ok=True)
     measurements = json.dumps(records, indent=2) + "\n"
     (build / "measurements.json").write_text(measurements)
-    # import_data binds values in one document, so the two packages are joined for the run.
-    source = MODEL.read_text() + "\n" + (model_dir / "repositories.sysml").read_text()
-    (build / "model.sysml").write_text(source)
+    text = source(model_dir)
+    (build / "model.sysml").write_text(text)
     try:
-        bound = conn.parse_sources([("model.sysml", source)], strict=True).import_data([("measurements.json", measurements)])
+        bound = conn.parse_sources([("model.sysml", text)], strict=True).import_data([("measurements.json", measurements)])
         (build / "bound.sysml").write_text(bound.content)
         answers = conn.parse_sources([("bound.sysml", bound.content)], strict=True).verify_satisfaction()
     except opensysml.errors.OpenSysMLError as e:
@@ -91,12 +91,12 @@ def evaluate(conn: opensysml.Connection, model_dir: pathlib.Path, build: pathlib
     return verdicts
 
 
-def run_all(registry: Registry, entries: list[dict], verdicts: dict, notes: dict):
+def run_all(registry: Registry, entries: list[dict], verdicts: dict, notes: dict, applicability: Applicability):
     results = []
     for e in entries:
         attest = e.get("attest") or {}
         said, topic, repo_id = notes[e["name"]]["said"], notes[e["name"]]["topic"], notes[e["name"]]["id"]
-        effective = {(p["id"], c["id"]): kind for p, c, kind in in_effect(registry, e)}
+        effective = {(p["id"], c["id"]): kind for p, c, kind in applicability.in_effect(registry, e)}
         rows = []
         for p in (p for p in registry.policies if p.get("scope", "repository") == "repository"):
             deviation = registry.deviations.get((str(repo_id), p["id"]))
@@ -122,7 +122,7 @@ def run_all(registry: Registry, entries: list[dict], verdicts: dict, notes: dict
                                     status, detail = "exception", f"{detail}; accepted exception: {deviation.get('reason')}"
                     rows.append({"policy": p["id"], "check": c["id"], "kind": kind, "status": status, "detail": detail})
         results.append({"name": e["name"], "type": e["type"], "stage": e["stage"],
-                        "tier": registry.tier(e["type"], e["stage"]), "checks": rows, "topic": topic})
+                        "tier": applicability.tier(e), "checks": rows, "topic": topic})
     return results
 
 
@@ -184,12 +184,13 @@ def main(argv=None):
     generate(registry, config, pathlib.Path(args.model))
     with connect(config["opensysml"]) as conn:
         facts = Model(conn, MODEL).facts
-        records, notes = sense_all(GitHub(), registry, entries)
+        applicability = Applicability(conn, pathlib.Path(args.model), registry, entries)
+        records, notes = sense_all(GitHub(), registry, entries, applicability)
         unknown = sorted({k for r in records for k in r if k != "element" and k not in facts})
         if unknown:
             raise SystemExit(f"construction error: sensors produced facts the model does not declare: {', '.join(unknown)}")
         verdicts = evaluate(conn, pathlib.Path(args.model), pathlib.Path(args.build), records)
-    results = run_all(registry, entries, verdicts, notes)
+    results = run_all(registry, entries, verdicts, notes, applicability)
 
     text = summarize(results)
     if args.summary:

@@ -1,8 +1,10 @@
 package Governance {
     doc /* The Open-MBEE governance policies as SysML v2, hand-written against Open-MBEE/repo-registry (the pin
            in repos.yaml): one requirement def per registry check, in a package per policy, named after their IDs in
-           PascalCase. tests/test_check.py checks this model against the registry's data; `sysml -satisfy` decides
-           whether each repository (model/repositories.sysml, generated from repos.yaml) satisfies them. */
+           PascalCase. tests/test_check.py checks this model against the registry's data; OpenSysML decides which
+           requirements are in effect for each repository (model/repositories.sysml, generated from repos.yaml:
+           the `inEffect` assumption) and whether the repository satisfies them. Deadlines and windows are stated
+           here, in the required constraints; the sensors report ages in days. */
     private import ScalarValues::*;
 
     enum def Type { tool; media; research; governance; }
@@ -62,22 +64,30 @@ package Governance {
         attribute securityPolicyPresent : Boolean;
         doc /* GET /repos/{owner}/{repo}/private-vulnerability-reporting .enabled */
         attribute privateReportingOn : Boolean;
-        doc /* releases of the last 12 months whose tag is not vMAJOR.MINOR.PATCH */
-        attribute offPatternReleaseTags : Integer;
+        doc /* published non-draft releases whose tag is not vMAJOR.MINOR.PATCH */
+        attribute offPatternReleases : Integer;
+        doc /* days since the newest of them was published (0 when there is none) */
+        attribute newestOffPatternReleaseDays : Real;
         doc /* code-scanning default setup configured, or analyses exist */
         attribute codeScanningConfigured : Boolean;
         doc /* GET /repos/{owner}/{repo}/code-scanning/alerts answers (404 when code scanning is not enabled) */
         attribute codeScanningEnabled : Boolean;
-        doc /* open critical code-scanning alerts older than 14 days */
-        attribute criticalAlertsOverdue : Integer;
-        doc /* open medium-or-higher code-scanning alerts older than 60 days */
-        attribute mediumPlusAlertsOverdue : Integer;
-        doc /* open Dependabot alerts past 14 (critical) or 60 (high, medium) days */
-        attribute dependabotAlertsOverdue : Integer;
+        doc /* age in days of the oldest open critical code-scanning alert (0 when there is none) */
+        attribute oldestCriticalScanningAlertDays : Real;
+        doc /* age in days of the oldest open medium-or-higher code-scanning alert (0 when there is none) */
+        attribute oldestMediumPlusScanningAlertDays : Real;
+        doc /* age in days of the oldest open critical Dependabot alert (0 when there is none) */
+        attribute oldestCriticalDependabotAlertDays : Real;
+        doc /* age in days of the oldest open high or medium Dependabot alert (0 when there is none) */
+        attribute oldestHighOrMediumDependabotAlertDays : Real;
         doc /* distinct users CODEOWNERS names, teams expanded */
         attribute codeOwners : Integer;
-        doc /* code owners not in maintainers.yaml or not verified within 12 months */
-        attribute unverifiedCodeOwners : Integer;
+        doc /* code owners not in maintainers.yaml */
+        attribute codeOwnersNotMaintainers : Integer;
+        doc /* code owners in maintainers.yaml with no verification date */
+        attribute codeOwnersNeverVerified : Integer;
+        doc /* days since the oldest verification date among the code owners (0 when none has one) */
+        attribute oldestCodeOwnerVerificationDays : Real;
         doc /* GET /repos/{owner}/{repo}/actions/permissions/workflow .default_workflow_permissions == read */
         attribute defaultTokenRead : Boolean;
 
@@ -292,7 +302,7 @@ package Governance {
                 doc /* semver-tags reads: GET /repos/{owner}/{repo}/releases -> every non-draft release tag in the last 12 months matches vMAJOR.MINOR.PATCH (semver.org) */
                 subject repo : Repository;
                 assume constraint inEffect { (repo.type == Type::tool) and (repo.stage == Stage::incubating or repo.stage == Stage::graduated) }
-                require constraint semverTags { repo.offPatternReleaseTags == 0 }
+                require constraint semverTags { repo.offPatternReleases == 0 or repo.newestOffPatternReleaseDays > 365 }
             }
             requirement def StableReleasePolicy {
                 doc /* stable-release-policy (attested): For graduated tools: a published policy says which releases are supported, and how fixes are backported (copied into those older supported releases). */
@@ -313,7 +323,7 @@ package Governance {
                 doc /* no-open-critical reads: GET /repos/{owner}/{repo}/code-scanning/alerts?state=open -> none with security_severity_level == critical older than 14 days */
                 subject repo : Repository;
                 assume constraint inEffect { (repo.type == Type::tool or repo.type == Type::governance) and (repo.stage == Stage::incubating or repo.stage == Stage::graduated) }
-                require constraint noOpenCritical { repo.codeScanningEnabled and repo.criticalAlertsOverdue == 0 }
+                require constraint noOpenCritical { repo.codeScanningEnabled and repo.oldestCriticalScanningAlertDays <= 14 }
             }
         }
         package VerifiedCodeOwners {
@@ -322,7 +332,7 @@ package Governance {
                 doc /* verified-owners reads: GET /repos/{owner}/{repo}/contents/{.github/CODEOWNERS|CODEOWNERS|docs/CODEOWNERS} -> every person named is a maintainer in data/maintainers.yaml whose verification is dated within the last 12 months */
                 subject repo : Repository;
                 assume constraint inEffect { repo.tier == Tier::high }
-                require constraint verifiedOwners { repo.codeownersPresent and repo.codeOwners >= 1 and repo.unverifiedCodeOwners == 0 }
+                require constraint verifiedOwners { repo.codeownersPresent and repo.codeOwners >= 1 and repo.codeOwnersNotMaintainers == 0 and repo.codeOwnersNeverVerified == 0 and repo.oldestCodeOwnerVerificationDays <= 365 }
             }
         }
         package VulnerabilityRemediation {
@@ -331,13 +341,13 @@ package Governance {
                 doc /* dependency-alerts-on-time reads: GET /repos/{owner}/{repo}/dependabot/alerts?state=open -> no critical alert older than 14 days, and no high or medium alert older than 60 days */
                 subject repo : Repository;
                 assume constraint inEffect { repo.tier == Tier::high }
-                require constraint dependencyAlertsOnTime { repo.dependabotAlertsOverdue == 0 }
+                require constraint dependencyAlertsOnTime { repo.oldestCriticalDependabotAlertDays <= 14 and repo.oldestHighOrMediumDependabotAlertDays <= 60 }
             }
             requirement def ScanningClean {
                 doc /* scanning-clean reads: GET /repos/{owner}/{repo}/code-scanning/alerts?state=open -> no alert of medium or higher security severity older than 60 days */
                 subject repo : Repository;
                 assume constraint inEffect { repo.tier == Tier::high }
-                require constraint scanningClean { repo.codeScanningEnabled and repo.mediumPlusAlertsOverdue == 0 }
+                require constraint scanningClean { repo.codeScanningEnabled and repo.oldestMediumPlusScanningAlertDays <= 60 }
             }
             requirement def CoordinatedReleases {
                 doc /* coordinated-releases (attested): Fixes for known vulnerabilities are released in coordination with the project's users, following the security policy. */
