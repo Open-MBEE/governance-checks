@@ -58,12 +58,32 @@ def iso(days_ago, hours=0):
     return (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=days_ago, hours=hours)).isoformat()
 
 
-def test_applies_if_clauses():
-    attrs = {"type": "tool", "stage": "graduated", "tier": "high"}
-    assert common.applies({"attr": "tier", "eq": "high"}, attrs)
-    assert common.applies({"all": [{"attr": "type", "in": ["tool"]}, {"attr": "stage", "in": ["incubating", "graduated"]}]}, attrs)
-    assert not common.applies({"not": {"attr": "stage", "eq": "graduated"}}, attrs)
-    assert registry().tier("tool", "sandbox") == "low" and registry().tier("tool", "graduated") == "high"
+def applies(rule, attrs):
+    """The registry's applies_if, evaluated here only to check what the model decides."""
+    if rule is None:
+        return True
+    if "all" in rule:
+        return all(applies(r, attrs) for r in rule["all"])
+    if "any" in rule:
+        return any(applies(r, attrs) for r in rule["any"])
+    if "not" in rule:
+        return not applies(rule["not"], attrs)
+    return attrs[rule["attr"]] == rule["eq"] if "eq" in rule else attrs[rule["attr"]] in rule["in"]
+
+
+class Decided:
+    """An Applicability with the answers given, for the tests that do not ask OpenSysML."""
+
+    def __init__(self, reg, entries, tier="high"):
+        self.effective = {(e["name"], c["id"]): applies(model.check_rule(p, c), {**e, "tier": tier})
+                          for e in entries for p, c, _ in model.checks(reg)}
+        self.tiers = {e["name"]: tier for e in entries}
+
+    in_effect, tier = model.Applicability.in_effect, model.Applicability.tier
+
+
+def close(facts, **expected):
+    return facts == pytest.approx(expected, abs=0.01)
 
 
 # ---------------------------------------------------------------------------------------------------------- sensors
@@ -96,18 +116,25 @@ def test_codeowners():
     assert r.sense_codeowners_present().facts == {"codeownersPresent": True}
     assert r.sense_codeowners_valid().facts == {"codeownersErrors": 0}
     s = r.sense_verified_owners()
-    assert s.facts == {"codeownersPresent": True, "codeOwners": 2, "unverifiedCodeOwners": 2} and "someone: not in maintainers.yaml" in s.detail
+    assert s.facts == {"codeownersPresent": True, "codeOwners": 2, "codeOwnersNotMaintainers": 1, "codeOwnersNeverVerified": 1,
+                       "oldestCodeOwnerVerificationDays": 0.0}
+    assert "someone: not in maintainers.yaml" in s.detail and "HuiJun: no verification date" in s.detail
+    none = {"codeOwners": 0, "codeOwnersNotMaintainers": 0, "codeOwnersNeverVerified": 0, "oldestCodeOwnerVerificationDays": 0.0}
     assert repo({}).sense_codeowners_present().facts == {"codeownersPresent": False}
-    assert repo({}).sense_verified_owners().facts == {"codeownersPresent": False, "codeOwners": 0, "unverifiedCodeOwners": 0}
+    assert repo({}).sense_verified_owners().facts == {"codeownersPresent": False, **none}
+    r.registry.maintainers = {1: {"login": "HuiJun", "verified": iso(400)[:10]}, 2: {"login": "someone", "verified": iso(30)}}
+    s = r.sense_verified_owners()
+    assert s.facts["codeOwnersNotMaintainers"] == 0 and s.facts["codeOwnersNeverVerified"] == 0
+    assert 400 <= s.facts["oldestCodeOwnerVerificationDays"] < 401.01
     empty = {"repos/o/r/contents/CODEOWNERS": (200, {"content": ""})}
     assert repo(empty).sense_codeowners_present().facts == {"codeownersPresent": True}
-    assert repo(empty).sense_verified_owners().facts == {"codeownersPresent": True, "codeOwners": 0, "unverifiedCodeOwners": 0}
+    assert repo(empty).sense_verified_owners().facts == {"codeownersPresent": True, **none}
     denied = {f"repos/o/r/contents/{p}": (403, {}) for p in common.CODEOWNERS_PATHS}
     assert repo(denied).sense_codeowners_present().unreadable and repo(denied).sense_verified_owners().unreadable
     team = {"repos/o/r/contents/.github/CODEOWNERS": (200, {"content": base64.b64encode(b"* @o/core\n").decode()})}
     assert repo(team).sense_verified_owners().unreadable == "@o/core: team members HTTP 404"
     team["orgs/o/teams/core/members"] = (200, [{"login": "someone"}])
-    assert repo(team).sense_verified_owners().facts["unverifiedCodeOwners"] == 1
+    assert repo(team).sense_verified_owners().facts["codeOwnersNotMaintainers"] == 1
 
 
 def test_dependabot_alerts_on():
@@ -127,7 +154,8 @@ def test_release_integrity_and_semver():
     rels = (200, [{"tag_name": "v1.2.0", "published_at": iso(10)}, {"tag_name": "nightly-1", "published_at": iso(5)},
                   {"tag_name": "v0.9.0-alpha.1", "published_at": iso(400)}])
     s = repo({"repos/o/r/releases": rels}).sense_semver_tags()
-    assert s.facts == {"offPatternReleaseTags": 1} and "nightly-1" in s.detail
+    assert close(s.facts, offPatternReleases=2, newestOffPatternReleaseDays=5) and "nightly-1" in s.detail
+    assert repo({"repos/o/r/releases": (200, rels[1][:1])}).sense_semver_tags().facts == {"offPatternReleases": 0, "newestOffPatternReleaseDays": 0.0}
 
 
 def test_security_and_settings():
@@ -149,17 +177,20 @@ def test_code_scanning_and_alert_ages():
                     {"rule": {"security_severity_level": "medium"}, "created_at": iso(61)}])
     r = repo({"repos/o/r/code-scanning/alerts": alerts, "repos/o/r/code-scanning/analyses": (200, [{"id": 1}])})
     assert r.sense_code_scanning_configured().facts == {"codeScanningConfigured": True}
-    assert r.sense_no_open_critical().facts == {"codeScanningEnabled": True, "criticalAlertsOverdue": 1}
-    assert r.sense_scanning_clean().facts == {"codeScanningEnabled": True, "mediumPlusAlertsOverdue": 1}
+    assert close(r.sense_no_open_critical().facts, codeScanningEnabled=True, oldestCriticalScanningAlertDays=20)
+    assert close(r.sense_scanning_clean().facts, codeScanningEnabled=True, oldestMediumPlusScanningAlertDays=61)
     clean = repo({"repos/o/r/code-scanning/alerts": (200, []), "repos/o/r/code-scanning/analyses": (200, [])})
     assert clean.sense_code_scanning_configured().facts == {"codeScanningConfigured": False}
-    assert clean.sense_no_open_critical().facts == {"codeScanningEnabled": True, "criticalAlertsOverdue": 0}
+    assert clean.sense_no_open_critical().facts == {"codeScanningEnabled": True, "oldestCriticalScanningAlertDays": 0.0}
     off = repo({"repos/o/r/code-scanning/alerts": (404, {}), "repos/o/r/code-scanning/analyses": (404, {})})
     assert off.sense_code_scanning_configured().facts == {"codeScanningConfigured": False}
-    assert off.sense_no_open_critical().facts == {"codeScanningEnabled": False, "criticalAlertsOverdue": 0}
+    assert off.sense_no_open_critical().facts == {"codeScanningEnabled": False, "oldestCriticalScanningAlertDays": 0.0}
     dep = (200, [{"security_advisory": {"severity": "critical"}, "dependency": {"package": {"name": "c"}}, "created_at": iso(14, 12)},
                  {"security_advisory": {"severity": "high"}, "dependency": {"package": {"name": "h"}}, "created_at": iso(30)}])
-    assert repo({"repos/o/r/dependabot/alerts": dep}).sense_dependency_alerts_on_time().facts == {"dependabotAlertsOverdue": 1}
+    s = repo({"repos/o/r/dependabot/alerts": dep}).sense_dependency_alerts_on_time()
+    assert close(s.facts, oldestCriticalDependabotAlertDays=14.5, oldestHighOrMediumDependabotAlertDays=30) and "h(high,30d)" in s.detail
+    assert repo({"repos/o/r/dependabot/alerts": (200, [])}).sense_dependency_alerts_on_time().facts == {
+        "oldestCriticalDependabotAlertDays": 0.0, "oldestHighOrMediumDependabotAlertDays": 0.0}
 
 
 # ---------------------------------------------------------------------------------- the model against the registry
@@ -202,10 +233,24 @@ def test_repositories_follow_repos_yaml():
                {"name": "o/g", "type": "tool", "stage": "graduated", "attest": {"design-current": "docs/x.md"}}]
     reps = model.repositories_sysml(reg, entries)
     assert "satisfy requirement 'o/r: codeowners-present' : Policies::Codeowners::CodeownersPresent by 'o/r';" in reps
-    assert "'o/r: review-required'" not in reps and "attribute :>> tier" not in reps
+    assert "attribute :>> tier" not in reps
     assert "attribute :>> attestedDesignCurrent = true;" in reps and "attribute :>> attestedStableReleasePolicy = false;" in reps
-    mid = {c["id"] for _, c, _ in model.in_effect(reg, {"name": "o/m", "type": "tool", "stage": "incubating"})}
-    assert "semver-tags" in mid and "stable-release-policy" not in mid
+    # every registry check is asserted of every repository: which are in effect is the model's to decide
+    assert reps.count("satisfy requirement") == len(entries) * len(model.checks(reg))
+
+
+def test_the_model_decides_what_is_in_effect_as_the_registry_s_applies_if_does(conn, tmp_path):
+    reg = registry()
+    entries = [{"name": f"o/{t}-{s}", "type": t, "stage": s} for t, stages in reg.kinds.items() for s in stages]
+    model.generate(reg, {"repos": entries}, tmp_path)
+    decided = model.Applicability(conn, tmp_path, reg, entries)
+    for e in entries:
+        tier = reg.kinds[e["type"]][e["stage"]]["tier"]
+        assert decided.tier(e) == tier, e["name"]
+        expected = {c["id"] for p, c, _ in model.checks(reg) if applies(model.check_rule(p, c), {**e, "tier": tier})}
+        assert {c["id"] for _, c, _ in decided.in_effect(reg, e)} == expected, e["name"]
+    mid = {c["id"] for _, c, _ in decided.in_effect(reg, {"name": "o/tool-incubating"})}
+    assert "semver-tags" in mid and "stable-release-policy" not in mid and "review-required" not in mid
 
 
 def test_model_declares_the_facts_the_sensors_produce_and_the_registry_s_requirements(conn):
@@ -219,9 +264,10 @@ def test_model_declares_the_facts_the_sensors_produce_and_the_registry_s_require
             assert model.attested_fact(c["id"]) in names
     produced = {"archived", "approvalsRequired", "codeOwnerReviewRequired", "requiredStatusChecks", "codeownersPresent", "codeownersErrors",
                 "contributingPresent", "readmePresent", "dependabotAlertsOn", "forcePushBlocked", "deletionBlocked", "license", "stableRelease",
-                "sbomAttached", "releaseImmutable", "pushProtectionOn", "securityPolicyPresent", "privateReportingOn", "offPatternReleaseTags",
-                "codeScanningConfigured", "codeScanningEnabled", "criticalAlertsOverdue", "mediumPlusAlertsOverdue", "dependabotAlertsOverdue",
-                "codeOwners", "unverifiedCodeOwners", "defaultTokenRead"}
+                "sbomAttached", "releaseImmutable", "pushProtectionOn", "securityPolicyPresent", "privateReportingOn", "offPatternReleases",
+                "newestOffPatternReleaseDays", "codeScanningConfigured", "codeScanningEnabled", "oldestCriticalScanningAlertDays",
+                "oldestMediumPlusScanningAlertDays", "oldestCriticalDependabotAlertDays", "oldestHighOrMediumDependabotAlertDays",
+                "codeOwners", "codeOwnersNotMaintainers", "codeOwnersNeverVerified", "oldestCodeOwnerVerificationDays", "defaultTokenRead"}
     assert produced <= names, produced - names
 
 
@@ -248,6 +294,33 @@ def test_opensysml_decides_the_verdicts(conn, tmp_path):
     assert status["checks-required"] == "undecided"
     assert verdicts[("o/r", "readme-present")]["condition"] == "repo.readmePresent"
     assert "no value for feature repo.requiredStatusChecks" in verdicts[("o/r", "checks-required")]["error"]
+    assert status["archived"] == "holds"  # not in effect for a live repository: nothing is required of it
+
+
+def test_the_model_states_the_deadlines(conn, tmp_path):
+    reg = registry()
+    names = ["o/on-time", "o/late", "o/edge"]
+    model.generate(reg, {"repos": [{"name": n, "type": "tool", "stage": "graduated"} for n in names]}, tmp_path / "m")
+    owners = {"codeownersPresent": True, "codeOwners": 2, "codeOwnersNotMaintainers": 0, "codeOwnersNeverVerified": 0}
+    records = [
+        {"element": model.element("o/on-time"), "codeScanningEnabled": True, "oldestCriticalScanningAlertDays": 14.0,
+         "oldestMediumPlusScanningAlertDays": 60.0, "oldestCriticalDependabotAlertDays": 0.0, "oldestHighOrMediumDependabotAlertDays": 59.9,
+         "offPatternReleases": 0, "newestOffPatternReleaseDays": 0.0, **owners, "oldestCodeOwnerVerificationDays": 365.0},
+        {"element": model.element("o/late"), "codeScanningEnabled": True, "oldestCriticalScanningAlertDays": 14.01,
+         "oldestMediumPlusScanningAlertDays": 60.01, "oldestCriticalDependabotAlertDays": 14.5, "oldestHighOrMediumDependabotAlertDays": 30.0,
+         "offPatternReleases": 1, "newestOffPatternReleaseDays": 5.0, **owners, "oldestCodeOwnerVerificationDays": 365.01},
+        {"element": model.element("o/edge"), "codeScanningEnabled": False, "oldestCriticalScanningAlertDays": 0.0,
+         "oldestMediumPlusScanningAlertDays": 0.0, "oldestCriticalDependabotAlertDays": 14.0, "oldestHighOrMediumDependabotAlertDays": 60.01,
+         "offPatternReleases": 3, "newestOffPatternReleaseDays": 365.01, **owners, "codeOwnersNeverVerified": 1,
+         "oldestCodeOwnerVerificationDays": 10.0}]
+    verdicts = check.evaluate(conn, tmp_path / "m", tmp_path / "b", records)
+    deadlines = ("no-open-critical", "scanning-clean", "dependency-alerts-on-time", "semver-tags", "verified-owners")
+    status = {n: {c: verdicts[(n, c)]["status"] for c in deadlines} for n in names}
+    assert set(status["o/on-time"].values()) == {"holds"}, status["o/on-time"]
+    assert set(status["o/late"].values()) == {"violated"}, status["o/late"]
+    assert status["o/edge"] == {"no-open-critical": "violated", "scanning-clean": "violated", "dependency-alerts-on-time": "violated",
+                                "semver-tags": "holds", "verified-owners": "violated"}
+    assert "repo.oldestCriticalScanningAlertDays <= 14" in verdicts[("o/late", "no-open-critical")]["condition"]
 
 
 # ----------------------------------------------------------------------------------------------------------- driver
@@ -255,21 +328,22 @@ def test_opensysml_decides_the_verdicts(conn, tmp_path):
 def test_run_all_maps_verdicts_and_unreadable_facts():
     reg = registry()
     e = {"name": "o/r", "type": "tool", "stage": "graduated", "attest": {"design-current": "docs/x.md"}}
-    said = {c["id"]: sense.Sensed({}, "ok") for _, c, kind in model.in_effect(reg, e) if kind == "automated"}
+    decided = Decided(reg, [e])
+    said = {c["id"]: sense.Sensed({}, "ok") for _, c, kind in decided.in_effect(reg, e) if kind == "automated"}
     said["push-protection-on"] = sense.unreadable("HTTP 403")
-    verdicts = {("o/r", c["id"]): {"status": "holds", "condition": ""} for _, c, _ in model.in_effect(reg, e)}
+    verdicts = {("o/r", c["id"]): {"status": "holds", "condition": ""} for _, c, _ in model.checks(reg)}
     verdicts[("o/r", "sbom-attached")] = {"status": "violated", "condition": "repo.stableRelease and repo.sbomAttached"}
     verdicts[("o/r", "push-protection-on")] = {"status": "violated", "condition": "repo.pushProtectionOn"}
     verdicts[("o/r", "signed-with-provenance")] = {"status": "violated", "condition": "repo.attestedSignedWithProvenance"}
     notes = {"o/r": {"said": said, "topic": {"expected": "openmbee-tool", "declared": False}, "id": 7}}
-    by = {c["check"]: c for c in check.run_all(reg, [e], verdicts, notes)[0]["checks"]}
+    by = {c["check"]: c for c in check.run_all(reg, [e], verdicts, notes, decided)[0]["checks"]}
     assert by["review-required"]["status"] == "pass"
     assert by["sbom-attached"]["status"] == "fail" and by["sbom-attached"]["detail"].endswith("; evaluated to false: repo.stableRelease and repo.sbomAttached")
     assert by["push-protection-on"] == {**by["push-protection-on"], "status": "unreadable", "detail": "HTTP 403"}
     assert by["design-current"]["status"] == "attested" and by["signed-with-provenance"]["status"] == "unattested"
     assert by["archived"]["status"] == "n/a"
     reg.deviations[("7", "release-integrity")] = {"reason": "source-only"}
-    by = {c["check"]: c for c in check.run_all(reg, [e], verdicts, notes)[0]["checks"]}
+    by = {c["check"]: c for c in check.run_all(reg, [e], verdicts, notes, decided)[0]["checks"]}
     assert by["sbom-attached"]["status"] == "exception"
 
 
@@ -281,3 +355,10 @@ def test_regressions_on_good_to_bad_or_unreadable():
     baseline = {"o/r": {"checks": [{"check": "a", "status": "pass"}, {"check": "b", "status": "pass"}, {"check": "c", "status": "fail"}]}}
     regs = check.regressions(results, baseline)
     assert [r.split(" (")[0] for r in regs] == ["o/r: p/a pass -> fail", "o/r: p/b pass -> unreadable"]
+
+
+def test_a_kind_the_registry_does_not_define_is_a_construction_error():
+    reg = registry()
+    type_, stage = next((t, s) for t in reg.kinds for s in ("sandbox", "incubating", "graduated", "archived") if s not in reg.kinds[t])
+    with pytest.raises(SystemExit, match="no kind"):
+        model.repositories_sysml(reg, [{"name": "o/a", "type": type_, "stage": stage}])
