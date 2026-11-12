@@ -18,7 +18,10 @@ The model is the source and OpenSysML decides:
    read, and one `requirement def` per registry check in a package per policy (`Policies::ChangeReview::ReviewRequired`
    for `change-review`/`review-required`), whose assumption is the policy's `applies_if` and whose required constraint
    is how the check is decided, deadlines and windows included (14 and 60 days for alerts, 365 for off-pattern
-   release tags and code-owner verification). A policy change means editing this file; the unit tests fail when it disagrees with
+   release tags and code-owner verification). It also states the patterns the sensors match names against
+   (`Governance::Patterns`: the semver tag expression and the SBOM asset globs); OpenSysML has no pattern matching,
+   so the sensors read them from the model and apply them, and carry none of their own. A policy change means
+   editing this file; the unit tests fail when it disagrees with
    the pinned registry (a check without a requirement or the reverse, an assumption that is not the policy's
    `applies_if` or that OpenSysML evaluates differently at any type and stage, a tier that is not the kinds table's,
    a license list that differs).
@@ -26,11 +29,12 @@ The model is the source and OpenSysML decides:
    per entry bound to its type, stage and attestations, and one `satisfy` assertion per registry check, whatever
    the entry's kind; CI fails when the committed file is stale (`model.py --check`). It then asks OpenSysML, through
    the `opensysml` client, what the model says: which assertions are in effect (each one's `inEffect` assumption,
-   evaluated for its repository), each repository's tier, and the declared facts (the API's JSON element form), so
+   evaluated for its repository), each repository's tier, the patterns, and the declared facts (the API's JSON element form), so
    the facts a sensor may produce are the attributes the model declares.
 3. [`sense.py`](sense.py) observes the facts of the checks in effect, one sensor per check, through `gh api` — a
    count, a flag, a string, an age in days, never a verdict or a deadline — into `build/measurements.json`; a fact
-   the token cannot read is left out.
+   the token cannot read is left out. For an attested check the fact is whether the evidence `repos.yaml` gives
+   resolves: a link to a file or directory on github.com that exists.
 4. [`check.py`](check.py) hands the model and the facts to OpenSysML through its Python client
    ([`opensysml`](https://pypi.org/project/opensysml/)): `import_data` binds the facts into the model
    (`build/bound.sysml`) and `verify_satisfaction` evaluates every assertion; the verdicts (`holds` / `violated` /
@@ -54,8 +58,9 @@ pinned version).
 
 Statuses: `pass`, `fail`, `exception` (fails the predicate but the registry's `data/deviations.yaml` records an
 accepted exception for that repository and policy), `unreadable` (the token lacks the permission the policy names),
-`attested` / `unattested` (the policy's attested checks, recorded under `attest:` in `repos.yaml` with a link to the
-evidence), `n/a` (the requirement's assumption is false at that type/stage), `unimplemented` (org-level checks that need the
+`attested` / `unattested` (the policy's attested checks: attested when `attest:` in `repos.yaml` has an entry for
+the check and that entry is a link to a file or directory on github.com that exists; nothing reads what the file
+says), `n/a` (the requirement's assumption is false at that type/stage), `unimplemented` (org-level checks that need the
 registry's own scripts). Below each table the `openmbee-<type>` topic (the registry's `type_topics`) is reported as
 declared or not; it is how operators declare a type, not a policy check, and never affects the exit code.
 

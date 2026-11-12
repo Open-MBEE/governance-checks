@@ -8,7 +8,8 @@ evaluates each assertion's assumption to say which are in effect; sense.py obser
 assertion; this driver maps the verdicts to the table and compares them with baseline.json.
 
 Statuses: pass, fail, exception (fails, but the registry records an accepted deviation), unreadable (a fact the
-token could not read, so the assertion is unresolved), attested, unattested, n/a (the requirement's assumption
+token could not read, so the assertion is unresolved), attested (repos.yaml gives evidence and it resolves),
+unattested, n/a (the requirement's assumption
 is false at the type/stage the entry is measured at). Compliance failures are reported, never raised; the exit code is
 non-zero only for a regression against baseline.json or a construction error.
 """
@@ -25,7 +26,7 @@ import opensysml
 import yaml
 
 from common import GOOD, ORDER, GitHub, Registry
-from model import MODEL, Applicability, Model, assertion, element, generate, source
+from model import MODEL, Applicability, Model, assertion, element, evidence_fact, generate, source
 from sense import Repository
 
 SUBJECT = re.compile(r"^Repositories::(?P<name>.+?): (?P<check>[a-z0-9-]+)$")
@@ -44,14 +45,16 @@ def connect(pin: str) -> opensysml.Connection:
         raise SystemExit(f"construction error: no sysml-grpc {pin}: {e}")
 
 
-def sense_all(gh: GitHub, registry: Registry, entries: list[dict], applicability: Applicability):
+def sense_all(gh: GitHub, registry: Registry, entries: list[dict], applicability: Applicability, model: Model):
     """Facts per element for -import, plus what each sensor said, per repository and check."""
     records, notes = [], {}
     for e in entries:
-        repo = Repository(gh, registry, e)
+        repo = Repository(gh, registry, e, model)
         facts, said = {}, {}
         for policy, check, kind in applicability.in_effect(registry, e):
-            if kind != "automated":
+            if kind == "attested":
+                s = said[check["id"]] = repo.sense_evidence(evidence_fact(check["id"]), check["id"])
+                facts.update(s.facts)
                 continue
             sensor = repo.sensor(check["id"])
             if sensor is None:
@@ -94,7 +97,6 @@ def evaluate(conn: opensysml.Connection, model_dir: pathlib.Path, build: pathlib
 def run_all(registry: Registry, entries: list[dict], verdicts: dict, notes: dict, applicability: Applicability):
     results = []
     for e in entries:
-        attest = e.get("attest") or {}
         said, topic, repo_id = notes[e["name"]]["said"], notes[e["name"]]["topic"], notes[e["name"]]["id"]
         effective = {(p["id"], c["id"]): kind for p, c, kind in applicability.in_effect(registry, e)}
         rows = []
@@ -109,11 +111,11 @@ def run_all(registry: Registry, entries: list[dict], verdicts: dict, notes: dict
                         if v is None:
                             raise SystemExit(f"construction error: no verdict for {assertion(e['name'], c['id'])}")
                         status = VERDICT.get(v["status"], "unreadable")
+                        s = said[c["id"]]
+                        detail = s.unreadable or s.detail
                         if kind == "attested":
-                            status, detail = ("attested", str(attest[c["id"]])) if status == "pass" and c["id"] in attest else ("unattested", "no entry under attest: in repos.yaml")
+                            status = "unreadable" if s.unreadable else "attested" if status == "pass" else "unattested"
                         else:
-                            s = said[c["id"]]
-                            detail = s.unreadable or s.detail
                             if s.unreadable:
                                 status = "unreadable"  # a verdict over a fact nobody observed is not a verdict
                             elif status == "fail":
@@ -183,9 +185,10 @@ def main(argv=None):
 
     generate(registry, config, pathlib.Path(args.model))
     with connect(config["opensysml"]) as conn:
-        facts = Model(conn, MODEL).facts
+        model = Model(conn, MODEL)
+        facts = model.facts
         applicability = Applicability(conn, pathlib.Path(args.model), registry, entries)
-        records, notes = sense_all(GitHub(), registry, entries, applicability)
+        records, notes = sense_all(GitHub(), registry, entries, applicability, model)
         unknown = sorted({k for r in records for k in r if k != "element" and k not in facts})
         if unknown:
             raise SystemExit(f"construction error: sensors produced facts the model does not declare: {', '.join(unknown)}")
