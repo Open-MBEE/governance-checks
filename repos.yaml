@@ -2,7 +2,9 @@
 # The registry's own snapshot decides a repository's real kind; the entry here says which bar we hold it to,
 # so a repository can be measured at the tier it is heading for before the registry moves it there.
 #
-# attest: one entry per attested check (the policy's checks.attested[].id), pointing at the evidence.
+# attest: one entry per attested check (the policy's checks.attested[].id): a link to the file or directory on
+# github.com that is the evidence (https://github.com/{owner}/{repo}/blob|tree/{ref}/{path}). The check is attested
+# only while that link resolves; anything else, free text included, is reported as unattested.
 opensysml: v0.12.1   # the OpenSysML release that decides the model: the opensysml client in requirements.txt is this
                      # version and runs this release's sysml-grpc, checked against the digests the client ships
 
@@ -17,10 +19,10 @@ repos:
     attest:
       contributing-content: https://github.com/Open-MBEE/flexo-change-adapter/blob/develop/CONTRIBUTING.md
       dependency-policy: https://github.com/Open-MBEE/flexo-change-adapter/blob/develop/CONTRIBUTING.md#dependencies
-      service-pins: package.json pins every direct dependency to an exact version
+      service-pins: https://github.com/Open-MBEE/flexo-change-adapter/blob/develop/package.json
       disclosure-followed: https://github.com/Open-MBEE/flexo-change-adapter/blob/develop/SECURITY.md
       design-current: https://github.com/Open-MBEE/flexo-change-adapter/blob/develop/docs/security-design.md
-      workflows-hardened: all workflows pin action SHAs and set permissions per job (.github/workflows)
+      workflows-hardened: https://github.com/Open-MBEE/flexo-change-adapter/tree/develop/.github/workflows
       coordinated-releases: https://github.com/Open-MBEE/flexo-change-adapter/blob/develop/SECURITY.md
       no-built-executables: source tree holds no built executables
       signed-with-provenance: https://github.com/Open-MBEE/flexo-change-adapter/blob/develop/.github/workflows/release.yml
@@ -31,7 +33,7 @@ repos:
       contributing-content: https://github.com/Open-MBEE/OpenSysML/blob/develop/CONTRIBUTING.md
       disclosure-followed: https://github.com/Open-MBEE/OpenSysML/blob/develop/SECURITY.md
       coordinated-releases: https://github.com/Open-MBEE/OpenSysML/blob/develop/SECURITY.md
-      signed-with-provenance: https://github.com/Open-MBEE/OpenSysML/blob/develop/docs/releasing.md
+      signed-with-provenance: https://github.com/Open-MBEE/OpenSysML/blob/develop/docs/project/releasing.md
   - name: Open-MBEE/OpenSysML-Extensions-Library
     type: tool
     stage: incubating

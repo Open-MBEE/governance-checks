@@ -2,7 +2,8 @@
 """Sense the facts the repo-registry policies read, one sensor per automated check, through `gh api`.
 
 A sensor returns raw observations (a count, a flag, a string, an age in days), never a verdict and never a
-deadline: the model states the deadlines and OpenSysML evaluates them over these facts. A fact the token cannot
+deadline: the model states the deadlines and OpenSysML evaluates them over these facts. The patterns a sensor
+matches names against are the model's too (Governance::Patterns). A fact the token cannot
 read is left out, which the model reports as unresolved and the table as `unreadable`.
 """
 from __future__ import annotations
@@ -12,7 +13,10 @@ import datetime as dt
 import fnmatch
 import re
 
-from common import CODEOWNERS_PATHS, SBOM_GLOBS, SEMVER, GitHub, Registry, now, parse_time
+from common import CODEOWNERS_PATHS, GitHub, Registry, now, parse_time
+
+# A file or directory on github.com: /{owner}/{repo}/(blob|tree)/{ref}/{path}, the ref being one path segment.
+EVIDENCE = re.compile(r"^https://github\.com/(?P<repo>[^/\s]+/[^/\s]+)/(?:blob|tree)/(?P<ref>[^/\s]+)/(?P<path>[^#?\s]+)(?:#\S*)?$")
 
 DAY = dt.timedelta(days=1)
 
@@ -39,8 +43,8 @@ def unreadable(reason):
 
 
 class Repository:
-    def __init__(self, gh: GitHub, registry: Registry, entry: dict):
-        self.gh, self.registry, self.entry = gh, registry, entry
+    def __init__(self, gh: GitHub, registry: Registry, entry: dict, model):
+        self.gh, self.registry, self.entry, self.model = gh, registry, entry, model
         self.full = entry["name"]
         self.owner, self.name = self.full.split("/", 1)
         self.type = entry["type"]
@@ -52,6 +56,21 @@ class Repository:
 
     def sensor(self, check_id: str):
         return getattr(self, "sense_" + check_id.replace("-", "_"), None)
+
+    def sense_evidence(self, fact: str, check_id: str):
+        """Whether the evidence repos.yaml gives for an attested check is a file or directory that exists."""
+        evidence = (self.entry.get("attest") or {}).get(check_id)
+        if evidence is None:
+            return facts(**{fact: False}, detail="no entry under attest: in repos.yaml")
+        m = EVIDENCE.match(str(evidence).strip())
+        if not m:
+            return facts(**{fact: False}, detail=f"evidence is not a link to a file or directory on github.com: {evidence}")
+        status, _ = self.gh.api(f"repos/{m['repo']}/contents/{m['path'].rstrip('/')}?ref={m['ref']}")
+        if status == 200:
+            return facts(**{fact: True}, detail=str(evidence))
+        if status == 404:
+            return facts(**{fact: False}, detail=f"evidence not found: {evidence}")
+        return unreadable(f"evidence HTTP {status}: {evidence}")
 
     # helpers
     def rules(self):
@@ -200,7 +219,7 @@ class Repository:
         if rel is None:
             return facts(stableRelease=False, sbomAttached=False, detail=why) if why.startswith("no ") else unreadable(why)
         names = [a["name"] for a in rel.get("assets", [])]
-        sbom = [n for n in names if any(fnmatch.fnmatch(n.lower(), g) for g in SBOM_GLOBS)]
+        sbom = [n for n in names if any(fnmatch.fnmatch(n.lower(), g) for g in self.model.sbom_globs)]
         return facts(stableRelease=True, sbomAttached=bool(sbom), detail=f"{rel.get('tag_name')}: {', '.join(sbom) or 'no SBOM among ' + str(len(names)) + ' asset(s)'}")
 
     def sense_release_immutable(self):
@@ -240,7 +259,7 @@ class Repository:
         if status != 200:
             return unreadable(f"HTTP {status}")
         published = [r for r in rels if not r.get("draft") and r.get("published_at")]
-        bad = sorted((r for r in published if not SEMVER.match(r["tag_name"])), key=lambda r: r["published_at"], reverse=True)
+        bad = sorted((r for r in published if not self.model.semver.match(r["tag_name"])), key=lambda r: r["published_at"], reverse=True)
         newest = min(((now() - parse_time(r["published_at"])) / DAY for r in bad), default=0.0)
         detail = f"{len(published)} release(s); off-pattern: {', '.join(r['tag_name'] for r in bad[:5]) or 'none'}"
         if bad:

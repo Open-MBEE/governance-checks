@@ -14,9 +14,7 @@ import sys
 
 import yaml
 
-SEMVER = re.compile(r"^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 CODEOWNERS_PATHS = (".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS")
-SBOM_GLOBS = ("*.spdx.json", "*.spdx", "*.cdx.json", "*bom*.json")
 ORDER = ["fail", "unreadable", "unattested", "unimplemented", "pass", "exception", "attested", "n/a"]
 GOOD = {"pass", "exception", "attested", "n/a"}
 # An attested check whose statement binds a narrower kind than its policy (semantic-versioning: "For graduated

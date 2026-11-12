@@ -1,10 +1,12 @@
 """Unit tests with a fake GitHub: each sensor's facts, the generated model, the verdict mapping, the regression rule."""
 import base64
 import datetime as dt
+import functools
 import json
 import re
 import pathlib
 import sys
+import types
 
 import pytest
 import yaml
@@ -45,13 +47,19 @@ def registry():
     return common.Registry(REGISTRY)
 
 
-def repo(responses, **entry):
+@functools.cache
+def the_model():
+    with check.connect(PIN) as c:
+        return model.Model(c)
+
+
+def repo(responses, patterns=None, **entry):
     base = {"repos/o/r": (200, {"id": 7, "default_branch": "develop", "archived": False, "license": {"spdx_id": "Apache-2.0"},
                                 "topics": ["openmbee-tool"], "permissions": {"admin": False}})}
     base.update(responses)
     e = {"name": "o/r", "type": "tool", "stage": "graduated"}
     e.update(entry)
-    return sense.Repository(FakeGitHub(base), registry(), e)
+    return sense.Repository(FakeGitHub(base), registry(), e, patterns or the_model())
 
 
 def iso(days_ago, hours=0):
@@ -158,6 +166,38 @@ def test_release_integrity_and_semver():
     assert repo({"repos/o/r/releases": (200, rels[1][:1])}).sense_semver_tags().facts == {"offPatternReleases": 0, "newestOffPatternReleaseDays": 0.0}
 
 
+def test_the_patterns_are_the_model_s():
+    m = the_model()
+    for tag, ok in {"v1.2.3": True, "v0.0.0": True, "v10.20.30": True, "1.2.3": False, "v1.2": False, "v01.2.3": False,
+                    "v1.2.3-rc.1": False, "v1.2.3.4": False, "v1x2x3": False}.items():
+        assert bool(m.semver.match(tag)) == ok, tag
+    assert m.sbom_globs == ["*.spdx.json", "*.spdx", "*.cdx.json", "*bom*.json"]
+    assert not hasattr(common, "SEMVER") and not hasattr(common, "SBOM_GLOBS")
+    # a sensor matches with whatever the model states
+    other = types.SimpleNamespace(semver=re.compile("^nightly-"), sbom_globs=["*.txt"])
+    rel = (200, {"tag_name": "v1.2.0", "assets": [{"name": "x.spdx.json"}]})
+    assert repo({"repos/o/r/releases/latest": rel}, patterns=other).sense_sbom_attached().facts["sbomAttached"] is False
+    rels = (200, [{"tag_name": "v1.2.0", "published_at": iso(10)}, {"tag_name": "nightly-1", "published_at": iso(5)}])
+    assert close(repo({"repos/o/r/releases": rels}, patterns=other).sense_semver_tags().facts, offPatternReleases=1, newestOffPatternReleaseDays=10)
+
+
+def test_evidence_resolves_only_for_a_file_or_directory_that_exists():
+    link = "https://github.com/o/e/blob/develop/docs/design.md"
+    attest = {"design-current": link + "#controls", "workflows-hardened": "https://github.com/o/e/tree/develop/.github/workflows/",
+              "service-pins": "package.json pins every dependency", "dependency-policy": "https://example.org/policy",
+              "disclosure-followed": "https://github.com/o/e/blob/develop/GONE.md", "coordinated-releases": "https://github.com/o/e/blob/develop/DENIED.md"}
+    r = repo({"repos/o/e/contents/docs/design.md?ref=develop": (200, {"name": "design.md"}),
+              "repos/o/e/contents/.github/workflows?ref=develop": (200, [{"name": "ci.yml"}]),
+              "repos/o/e/contents/DENIED.md?ref=develop": (403, {})}, attest=attest)
+    sensed = {c: r.sense_evidence("f", c) for c in [*attest, "no-built-executables"]}
+    assert sensed["design-current"].facts == {"f": True} and sensed["design-current"].detail == link + "#controls"
+    assert sensed["workflows-hardened"].facts == {"f": True}
+    for c, why in {"service-pins": "not a link", "dependency-policy": "not a link", "disclosure-followed": "evidence not found",
+                   "no-built-executables": "no entry under attest"}.items():
+        assert sensed[c].facts == {"f": False} and why in sensed[c].detail, c
+    assert sensed["coordinated-releases"].unreadable.startswith("evidence HTTP 403")
+
+
 def test_security_and_settings():
     r = repo({"repos/o/r": (200, {"default_branch": "main", "security_and_analysis": {"secret_scanning_push_protection": {"status": "enabled"}}}),
               "graphql": (200, {"data": {"repository": {"isSecurityPolicyEnabled": True}}}),
@@ -218,7 +258,7 @@ def test_every_registry_check_is_a_requirement_with_the_policy_s_assumption():
                 if kind == "automated":
                     assert r.sensor(c["id"]) is not None, c["id"]
                 else:
-                    assert f"repo.{model.attested_fact(c['id'])}" in block
+                    assert f"{{ repo.{model.attested_fact(c['id'])} and repo.{model.evidence_fact(c['id'])} }}" in block
     declared = set(re.findall(r"^\s*requirement def (\w+)", MODEL_TEXT, re.M))
     assert declared == {n.rsplit("::", 1)[1] for n in expected}, "requirement defs without a registry check"
     lic = requirement_block("license-by-type", "license-allowed")
@@ -261,7 +301,7 @@ def test_model_declares_the_facts_the_sensors_produce_and_the_registry_s_require
     names = set(m.facts)
     for p in model.repo_policies(reg):
         for c in p["checks"].get("attested") or []:
-            assert model.attested_fact(c["id"]) in names
+            assert model.attested_fact(c["id"]) in names and model.evidence_fact(c["id"]) in names
     produced = {"archived", "approvalsRequired", "codeOwnerReviewRequired", "requiredStatusChecks", "codeownersPresent", "codeownersErrors",
                 "contributingPresent", "readmePresent", "dependabotAlertsOn", "forcePushBlocked", "deletionBlocked", "license", "stableRelease",
                 "sbomAttached", "releaseImmutable", "pushProtectionOn", "securityPolicyPresent", "privateReportingOn", "offPatternReleases",
@@ -282,15 +322,19 @@ def test_tier_calc_matches_the_kinds_table(conn):
 
 def test_opensysml_decides_the_verdicts(conn, tmp_path):
     reg = registry()
-    entries = [{"name": "o/r", "type": "tool", "stage": "graduated", "attest": {"design-current": "x"}}]
+    entries = [{"name": "o/r", "type": "tool", "stage": "graduated",
+                "attest": {"design-current": "x", "dependency-policy": "y", "service-pins": "z"}}]
     (tmp_path / "m").mkdir()
     model.generate(reg, {"repos": entries}, tmp_path / "m")
     records = [{"element": model.element("o/r"), "approvalsRequired": 1, "codeOwnerReviewRequired": True, "readmePresent": False,
-                "license": "GPL-3.0"}]
+                "license": "GPL-3.0", "evidenceDesignCurrentResolves": True, "evidenceDependencyPolicyResolves": False,
+                "evidenceSignedWithProvenanceResolves": True}]
     verdicts = check.evaluate(conn, tmp_path / "m", tmp_path / "b", records)
     status = {k[1]: v["status"] for k, v in verdicts.items()}
     assert status["review-required"] == "holds" and status["readme-present"] == "violated" and status["license-allowed"] == "violated"
+    # attested needs both: an entry in repos.yaml and evidence that resolves
     assert status["design-current"] == "holds" and status["signed-with-provenance"] == "violated"
+    assert status["dependency-policy"] == "violated" and status["service-pins"] == "undecided"
     assert status["checks-required"] == "undecided"
     assert verdicts[("o/r", "readme-present")]["condition"] == "repo.readmePresent"
     assert "no value for feature repo.requiredStatusChecks" in verdicts[("o/r", "checks-required")]["error"]
@@ -329,8 +373,11 @@ def test_run_all_maps_verdicts_and_unreadable_facts():
     reg = registry()
     e = {"name": "o/r", "type": "tool", "stage": "graduated", "attest": {"design-current": "docs/x.md"}}
     decided = Decided(reg, [e])
-    said = {c["id"]: sense.Sensed({}, "ok") for _, c, kind in decided.in_effect(reg, e) if kind == "automated"}
+    said = {c["id"]: sense.Sensed({}, "ok") for _, c, kind in decided.in_effect(reg, e)}
     said["push-protection-on"] = sense.unreadable("HTTP 403")
+    said["design-current"] = sense.Sensed({}, "https://github.com/o/r/blob/develop/docs/x.md")
+    said["signed-with-provenance"] = sense.Sensed({}, "no entry under attest: in repos.yaml")
+    said["disclosure-followed"] = sense.unreadable("evidence HTTP 403: x")
     verdicts = {("o/r", c["id"]): {"status": "holds", "condition": ""} for _, c, _ in model.checks(reg)}
     verdicts[("o/r", "sbom-attached")] = {"status": "violated", "condition": "repo.stableRelease and repo.sbomAttached"}
     verdicts[("o/r", "push-protection-on")] = {"status": "violated", "condition": "repo.pushProtectionOn"}
@@ -340,7 +387,9 @@ def test_run_all_maps_verdicts_and_unreadable_facts():
     assert by["review-required"]["status"] == "pass"
     assert by["sbom-attached"]["status"] == "fail" and by["sbom-attached"]["detail"].endswith("; evaluated to false: repo.stableRelease and repo.sbomAttached")
     assert by["push-protection-on"] == {**by["push-protection-on"], "status": "unreadable", "detail": "HTTP 403"}
-    assert by["design-current"]["status"] == "attested" and by["signed-with-provenance"]["status"] == "unattested"
+    assert by["design-current"]["status"] == "attested" and by["design-current"]["detail"].endswith("docs/x.md")
+    assert by["signed-with-provenance"]["status"] == "unattested" and by["signed-with-provenance"]["detail"].startswith("no entry")
+    assert by["disclosure-followed"]["status"] == "unreadable"
     assert by["archived"]["status"] == "n/a"
     reg.deviations[("7", "release-integrity")] = {"reason": "source-only"}
     by = {c["check"]: c for c in check.run_all(reg, [e], verdicts, notes, decided)[0]["checks"]}

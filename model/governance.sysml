@@ -4,7 +4,8 @@ package Governance {
            PascalCase. tests/test_check.py checks this model against the registry's data; OpenSysML decides which
            requirements are in effect for each repository (model/repositories.sysml, generated from repos.yaml:
            the `inEffect` assumption) and whether the repository satisfies them. Deadlines and windows are stated
-           here, in the required constraints; the sensors report ages in days. */
+           here, in the required constraints; the sensors report ages in days. An attested check holds when
+           repos.yaml records evidence for it and that evidence resolves. */
     private import ScalarValues::*;
 
     enum def Type { tool; media; research; governance; }
@@ -20,6 +21,15 @@ package Governance {
             else if stage == Stage::sandbox or type == Type::research ? Tier::low
             else if stage == Stage::graduated and (type == Type::tool or type == Type::governance) ? Tier::high
             else Tier::medium;
+    }
+
+    package Patterns {
+        doc /* The patterns the sensors match names against. OpenSysML has no pattern matching, so the sensors read
+               these from the model and apply them; they carry none of their own. */
+        doc /* semantic-versioning: a release tag is vMAJOR.MINOR.PATCH (semver.org), as a regular expression */
+        attribute semverTag : String = "^v(0|[1-9][0-9]*)[.](0|[1-9][0-9]*)[.](0|[1-9][0-9]*)$";
+        doc /* release-integrity: a release asset is an SPDX or CycloneDX SBOM when its lower-cased name matches one of these globs */
+        attribute sbomAsset : String[4] = ("*.spdx.json", "*.spdx", "*.cdx.json", "*bom*.json");
     }
 
     part def Repository {
@@ -93,26 +103,48 @@ package Governance {
 
         doc /* Attested in repos.yaml: The README says that support has ended, and names any known active forks. (Repositories archived before this policy existed are exempt.) */
         attribute attestedEndOfSupportNote : Boolean;
+        doc /* the evidence repos.yaml gives for it is a file or directory on github.com that exists */
+        attribute evidenceEndOfSupportNoteResolves : Boolean;
         doc /* Attested in repos.yaml: The contribution guide keeps requirements on contributors minimal, says which kinds of contribution are accepted, says how contributions are reviewed and tested before they are merged, and (for code) asks for tests with each change. */
         attribute attestedContributingContent : Boolean;
+        doc /* the evidence repos.yaml gives for it is a file or directory on github.com that exists */
+        attribute evidenceContributingContentResolves : Boolean;
         doc /* Attested in repos.yaml: A dependency policy is published (in CONTRIBUTING or its own file) and followed. */
         attribute attestedDependencyPolicy : Boolean;
+        doc /* the evidence repos.yaml gives for it is a file or directory on github.com that exists */
+        attribute evidenceDependencyPolicyResolves : Boolean;
         doc /* Attested in repos.yaml: If the project provides an internet or infrastructure service, its direct dependencies are pinned: each one names an exact version (for example 2.4.1, not 2.x). */
         attribute attestedServicePins : Boolean;
+        doc /* the evidence repos.yaml gives for it is a file or directory on github.com that exists */
+        attribute evidenceServicePinsResolves : Boolean;
         doc /* Attested in repos.yaml: Release artifacts are signed, and a build record (provenance) is published with them that meets SLSA Build Level 3: built by GitHub Actions on GitHub-hosted runners through a reusable workflow, with GitHub artifact attestations. */
         attribute attestedSignedWithProvenance : Boolean;
+        doc /* the evidence repos.yaml gives for it is a file or directory on github.com that exists */
+        attribute evidenceSignedWithProvenanceResolves : Boolean;
         doc /* Attested in repos.yaml: The source repository holds no built executables, except test fixtures that are documented as such. */
         attribute attestedNoBuiltExecutables : Boolean;
+        doc /* the evidence repos.yaml gives for it is a file or directory on github.com that exists */
+        attribute evidenceNoBuiltExecutablesResolves : Boolean;
         doc /* Attested in repos.yaml: A design document describes the security controls (the measures that protect the software and its users, such as who can sign in, how data is protected, and how input is checked) and is updated when they change. */
         attribute attestedDesignCurrent : Boolean;
+        doc /* the evidence repos.yaml gives for it is a file or directory on github.com that exists */
+        attribute evidenceDesignCurrentResolves : Boolean;
         doc /* Attested in repos.yaml: Reports are answered following the published process, which also says what to expect for automated or AI-assisted reports. */
         attribute attestedDisclosureFollowed : Boolean;
+        doc /* the evidence repos.yaml gives for it is a file or directory on github.com that exists */
+        attribute evidenceDisclosureFollowedResolves : Boolean;
         doc /* Attested in repos.yaml: For graduated tools: a published policy says which releases are supported, and how fixes are backported (copied into those older supported releases). */
         attribute attestedStableReleasePolicy : Boolean;
+        doc /* the evidence repos.yaml gives for it is a file or directory on github.com that exists */
+        attribute evidenceStableReleasePolicyResolves : Boolean;
         doc /* Attested in repos.yaml: Fixes for known vulnerabilities are released in coordination with the project's users, following the security policy. */
         attribute attestedCoordinatedReleases : Boolean;
+        doc /* the evidence repos.yaml gives for it is a file or directory on github.com that exists */
+        attribute evidenceCoordinatedReleasesResolves : Boolean;
         doc /* Attested in repos.yaml: Workflows follow GitHub's security hardening guide for Actions: text that outside contributors control (such as pull request titles) is never run as a command, code from outside contributors' pull requests is never run with write access or secrets, and each job asks only for the permissions it needs. */
         attribute attestedWorkflowsHardened : Boolean;
+        doc /* the evidence repos.yaml gives for it is a file or directory on github.com that exists */
+        attribute evidenceWorkflowsHardenedResolves : Boolean;
     }
 
     package Policies {
@@ -128,7 +160,7 @@ package Governance {
                 doc /* end-of-support-note (attested): The README says that support has ended, and names any known active forks. (Repositories archived before this policy existed are exempt.) */
                 subject repo : Repository;
                 assume constraint inEffect { repo.stage == Stage::archived }
-                require constraint endOfSupportNote { repo.attestedEndOfSupportNote }
+                require constraint endOfSupportNote { repo.attestedEndOfSupportNote and repo.evidenceEndOfSupportNoteResolves }
             }
         }
         package ChangeReview {
@@ -173,7 +205,7 @@ package Governance {
                 doc /* contributing-content (attested): The contribution guide keeps requirements on contributors minimal, says which kinds of contribution are accepted, says how contributions are reviewed and tested before they are merged, and (for code) asks for tests with each change. */
                 subject repo : Repository;
                 assume constraint inEffect { (repo.type == Type::tool or repo.type == Type::media or repo.type == Type::governance) and (repo.stage == Stage::incubating or repo.stage == Stage::graduated) }
-                require constraint contributingContent { repo.attestedContributingContent }
+                require constraint contributingContent { repo.attestedContributingContent and repo.evidenceContributingContentResolves }
             }
         }
         package DependencyManagement {
@@ -188,13 +220,13 @@ package Governance {
                 doc /* dependency-policy (attested): A dependency policy is published (in CONTRIBUTING or its own file) and followed. */
                 subject repo : Repository;
                 assume constraint inEffect { (repo.type == Type::tool or repo.type == Type::governance) and (repo.stage == Stage::incubating or repo.stage == Stage::graduated) }
-                require constraint dependencyPolicy { repo.attestedDependencyPolicy }
+                require constraint dependencyPolicy { repo.attestedDependencyPolicy and repo.evidenceDependencyPolicyResolves }
             }
             requirement def ServicePins {
                 doc /* service-pins (attested): If the project provides an internet or infrastructure service, its direct dependencies are pinned: each one names an exact version (for example 2.4.1, not 2.x). */
                 subject repo : Repository;
                 assume constraint inEffect { (repo.type == Type::tool or repo.type == Type::governance) and (repo.stage == Stage::incubating or repo.stage == Stage::graduated) }
-                require constraint servicePins { repo.attestedServicePins }
+                require constraint servicePins { repo.attestedServicePins and repo.evidenceServicePinsResolves }
             }
         }
         package HistoryProtection {
@@ -248,13 +280,13 @@ package Governance {
                 doc /* signed-with-provenance (attested): Release artifacts are signed, and a build record (provenance) is published with them that meets SLSA Build Level 3: built by GitHub Actions on GitHub-hosted runners through a reusable workflow, with GitHub artifact attestations. */
                 subject repo : Repository;
                 assume constraint inEffect { (repo.type == Type::tool) and (repo.stage == Stage::graduated) }
-                require constraint signedWithProvenance { repo.attestedSignedWithProvenance }
+                require constraint signedWithProvenance { repo.attestedSignedWithProvenance and repo.evidenceSignedWithProvenanceResolves }
             }
             requirement def NoBuiltExecutables {
                 doc /* no-built-executables (attested): The source repository holds no built executables, except test fixtures that are documented as such. */
                 subject repo : Repository;
                 assume constraint inEffect { (repo.type == Type::tool) and (repo.stage == Stage::graduated) }
-                require constraint noBuiltExecutables { repo.attestedNoBuiltExecutables }
+                require constraint noBuiltExecutables { repo.attestedNoBuiltExecutables and repo.evidenceNoBuiltExecutablesResolves }
             }
         }
         package SecretProtection {
@@ -272,7 +304,7 @@ package Governance {
                 doc /* design-current (attested): A design document describes the security controls (the measures that protect the software and its users, such as who can sign in, how data is protected, and how input is checked) and is updated when they change. */
                 subject repo : Repository;
                 assume constraint inEffect { repo.tier == Tier::high }
-                require constraint designCurrent { repo.attestedDesignCurrent }
+                require constraint designCurrent { repo.attestedDesignCurrent and repo.evidenceDesignCurrentResolves }
             }
         }
         package SecurityPolicy {
@@ -293,7 +325,7 @@ package Governance {
                 doc /* disclosure-followed (attested): Reports are answered following the published process, which also says what to expect for automated or AI-assisted reports. */
                 subject repo : Repository;
                 assume constraint inEffect { (repo.type == Type::tool or repo.type == Type::governance) and (repo.stage == Stage::incubating or repo.stage == Stage::graduated) }
-                require constraint disclosureFollowed { repo.attestedDisclosureFollowed }
+                require constraint disclosureFollowed { repo.attestedDisclosureFollowed and repo.evidenceDisclosureFollowedResolves }
             }
         }
         package SemanticVersioning {
@@ -308,7 +340,7 @@ package Governance {
                 doc /* stable-release-policy (attested): For graduated tools: a published policy says which releases are supported, and how fixes are backported (copied into those older supported releases). */
                 subject repo : Repository;
                 assume constraint inEffect { ((repo.type == Type::tool) and (repo.stage == Stage::incubating or repo.stage == Stage::graduated)) and (repo.stage == Stage::graduated) }
-                require constraint stableReleasePolicy { repo.attestedStableReleasePolicy }
+                require constraint stableReleasePolicy { repo.attestedStableReleasePolicy and repo.evidenceStableReleasePolicyResolves }
             }
         }
         package StaticAnalysis {
@@ -353,7 +385,7 @@ package Governance {
                 doc /* coordinated-releases (attested): Fixes for known vulnerabilities are released in coordination with the project's users, following the security policy. */
                 subject repo : Repository;
                 assume constraint inEffect { repo.tier == Tier::high }
-                require constraint coordinatedReleases { repo.attestedCoordinatedReleases }
+                require constraint coordinatedReleases { repo.attestedCoordinatedReleases and repo.evidenceCoordinatedReleasesResolves }
             }
         }
         package WorkflowLeastPrivilege {
@@ -368,7 +400,7 @@ package Governance {
                 doc /* workflows-hardened (attested): Workflows follow GitHub's security hardening guide for Actions: text that outside contributors control (such as pull request titles) is never run as a command, code from outside contributors' pull requests is never run with write access or secrets, and each job asks only for the permissions it needs. */
                 subject repo : Repository;
                 assume constraint inEffect { (repo.type == Type::tool or repo.type == Type::governance) and (repo.stage == Stage::incubating or repo.stage == Stage::graduated) }
-                require constraint workflowsHardened { repo.attestedWorkflowsHardened }
+                require constraint workflowsHardened { repo.attestedWorkflowsHardened and repo.evidenceWorkflowsHardenedResolves }
             }
         }
     }

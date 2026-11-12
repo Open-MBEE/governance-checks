@@ -3,14 +3,15 @@
 the `Repository` facts, one requirement def per registry check in a package per policy, named after their IDs in
 PascalCase). This module only derives what follows from data: `model/repositories.sysml` from repos.yaml (one part
 per entry and one `satisfy` assertion per registry check), and reads the model back through OpenSysML: which
-assertions are in effect (each requirement's `inEffect` assumption, evaluated for the repository), the tier, and
-the declared facts (the API's JSON element form).
+assertions are in effect (each requirement's `inEffect` assumption, evaluated for the repository), the tier, the
+patterns the sensors apply, and the declared facts (the API's JSON element form).
 """
 from __future__ import annotations
 
 import argparse
 import json
 import pathlib
+import re
 import sys
 import warnings
 
@@ -28,6 +29,10 @@ def pascal(s: str) -> str:
 
 def attested_fact(check_id: str) -> str:
     return "attested" + pascal(check_id)
+
+
+def evidence_fact(check_id: str) -> str:
+    return f"evidence{pascal(check_id)}Resolves"
 
 
 def kind_ref(attr: str, value: str) -> str:
@@ -153,6 +158,11 @@ class Model:
         except opensysml.errors.OpenSysMLError as e:
             raise SystemExit(f"construction error: OpenSysML could not read {path}: {e}")
         by_id = {e["@id"]: e for e in elements if "@id" in e}
+        try:
+            self.semver = re.compile(self._strings(parsed, "Governance::Patterns::semverTag")[0])
+            self.sbom_globs = self._strings(parsed, "Governance::Patterns::sbomAsset")
+        except (opensysml.errors.OpenSysMLError, re.error) as e:
+            raise SystemExit(f"construction error: the model's patterns could not be read: {e}")
         self.facts: dict[str, str] = {}
         for e in elements:
             q = e.get("qualifiedName") or ""
@@ -161,6 +171,15 @@ class Model:
                 self.facts[e["declaredName"]] = types[0] if types else None
         self.requirements = sorted(e["qualifiedName"] for e in elements
                                    if e.get("@type") == "RequirementDefinition" and e.get("qualifiedName", "").startswith("Governance::Policies::"))
+
+
+    @staticmethod
+    def _strings(parsed, expression: str) -> list[str]:
+        value = parsed.eval(expression)
+        value = value if isinstance(value, list) else [value]
+        if not value or not all(isinstance(v, str) for v in value):
+            raise SystemExit(f"construction error: {expression} evaluated to {value!r}")
+        return value
 
 
 def main(argv=None):
